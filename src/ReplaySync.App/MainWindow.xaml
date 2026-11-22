@@ -1,0 +1,147 @@
+<Window x:Class="DeepReplaySync.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Deep Replay Sync"
+        Width="400" SizeToContent="Height" ResizeMode="CanMinimize"
+        Background="{StaticResource Back}" Foreground="{StaticResource Text}"
+        FontFamily="Segoe UI" FontSize="13" Focusable="True" FocusVisualStyle="{x:Null}">
+    <StackPanel Margin="12">
+
+        <!-- The state, readable at a glance. A fixed height, so the buttons below do not move under the mouse -->
+        <Border x:Name="BannerBox" Height="78" CornerRadius="6" Padding="12,8" Background="{StaticResource IdleBack}">
+            <StackPanel VerticalAlignment="Center">
+                <TextBlock x:Name="BannerTitle" FontSize="20" FontWeight="SemiBold" Text="Starting" />
+                <TextBlock x:Name="BannerDetail" TextWrapping="Wrap" MaxHeight="36" />
+            </StackPanel>
+        </Border>
+
+        <Grid Margin="0,8,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="8" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Button x:Name="SyncButton" Content="Start sync" Height="38" FontWeight="SemiBold" IsEnabled="False" Click="OnSyncClick" />
+            <Button x:Name="FollowButton" Grid.Column="2" Content="Let Deepchart follow" IsEnabled="False" Click="OnFollowClick"
+                    ToolTip="For a Deepchart which was paused by hand: the sync resumes it once it is safely behind." />
+        </Grid>
+
+        <Border Style="{StaticResource Card}">
+            <StackPanel>
+                <TextBlock Style="{StaticResource Caption}" Text="Deepchart compared with Deepdom" />
+                <TextBlock x:Name="GapText" FontSize="28" FontWeight="SemiBold" Text="&#x2014;" />
+                <TextBlock x:Name="BoundText" Style="{StaticResource Caption}" Text=" " />
+            </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource Card}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition />
+                    <RowDefinition />
+                    <RowDefinition Height="10" />
+                    <RowDefinition />
+                    <RowDefinition />
+                </Grid.RowDefinitions>
+
+                <TextBlock Text="Deepdom" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <TextBlock x:Name="DomTime" Grid.Column="1" FontFamily="Consolas" FontSize="18" />
+                <TextBlock x:Name="DomState" Grid.Row="1" Grid.ColumnSpan="2" Style="{StaticResource Caption}" />
+
+                <TextBlock Grid.Row="3" Text="Deepchart" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <TextBlock x:Name="ChartTime" Grid.Row="3" Grid.Column="1" FontFamily="Consolas" FontSize="18" />
+                <TextBlock x:Name="ChartState" Grid.Row="4" Grid.ColumnSpan="2" Style="{StaticResource Caption}" />
+            </Grid>
+        </Border>
+
+        <TextBlock x:Name="StatsText" Style="{StaticResource Caption}" Margin="0,8,0,0" Text=" " />
+        <TextBlock x:Name="SpeedWarning" Foreground="{StaticResource WarningText}" TextWrapping="Wrap" Visibility="Collapsed" />
+        <TextBlock x:Name="LastMessage" Style="{StaticResource Caption}" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" Text=" " />
+
+        <UniformGrid Columns="3" Margin="0,6,0,0">
+            <ToggleButton x:Name="StartTab" Content="Clean start" Style="{StaticResource Tab}" Checked="OnTabChanged" Unchecked="OnTabChanged" />
+            <ToggleButton x:Name="SettingsTab" Content="Settings" Style="{StaticResource Tab}" Checked="OnTabChanged" Unchecked="OnTabChanged" />
+            <ToggleButton x:Name="LogTab" Content="Log" Style="{StaticResource Tab}" Checked="OnTabChanged" Unchecked="OnTabChanged" />
+        </UniformGrid>
+
+        <Border x:Name="StartPanel" Style="{StaticResource Card}" Visibility="Collapsed">
+            <StackPanel>
+                <StackPanel x:Name="StartEdit">
+                    <TextBlock Style="{StaticResource Caption}"
+                               Text="Moves both replays to the same minute, plays them and turns the sync on. Write the date the way Deepdom shows it." />
+                    <Grid Margin="0,8,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="StartDate" FontFamily="Consolas" FontSize="15" AutomationProperties.Name="Start date"
+                                 TextChanged="OnStartDateChanged" />
+                        <Button x:Name="UseDomTime" Grid.Column="1" Margin="8,0,0,0" Content="Deepdom's time" Click="OnUseDomTimeClick" />
+                    </Grid>
+                    <TextBlock x:Name="StartError" Foreground="{StaticResource DangerText}" TextWrapping="Wrap" Margin="0,4,0,0" />
+                    <Button x:Name="StartButton" Content="Clean start..." HorizontalAlignment="Left" Width="130" Click="OnStartClick" />
+                </StackPanel>
+
+                <StackPanel x:Name="StartConfirm" Visibility="Collapsed">
+                    <TextBlock Text="This resets your Deepdom replay." FontWeight="SemiBold" Foreground="{StaticResource WarningText}" />
+                    <TextBlock x:Name="ConfirmText" TextWrapping="Wrap" Margin="0,6,0,10" />
+                    <!-- Cancel is where "Clean start..." was, so a double click can not confirm -->
+                    <DockPanel LastChildFill="False">
+                        <Button x:Name="ConfirmNo" Content="Cancel" Width="130" Click="OnConfirmNoClick" />
+                        <Button x:Name="ConfirmYes" DockPanel.Dock="Right" Content="Reset and start" Width="150"
+                                Background="{StaticResource DangerBack}" Click="OnConfirmYesClick" />
+                    </DockPanel>
+                </StackPanel>
+
+                <StackPanel x:Name="StartRunning" Visibility="Collapsed">
+                    <TextBlock x:Name="RunningText" TextWrapping="Wrap" Margin="0,0,0,10" />
+                    <Button x:Name="CancelStart" Content="Cancel clean start" HorizontalAlignment="Left" Click="OnCancelStartClick" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <Border x:Name="SettingsPanel" Style="{StaticResource Card}" Visibility="Collapsed">
+            <StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="80" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="34" />
+                        <RowDefinition Height="34" />
+                        <RowDefinition Height="34" />
+                        <RowDefinition Height="34" />
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="Pause closer than (s)" VerticalAlignment="Center"
+                               ToolTip="Deepchart is paused when it is less than this many replay seconds behind." />
+                    <TextBox x:Name="MarginBox" Grid.Column="1" Margin="0,3" />
+                    <TextBlock Grid.Row="1" Text="Resume after a further (s)" VerticalAlignment="Center"
+                               ToolTip="Higher means fewer but longer pauses." />
+                    <TextBox x:Name="HysteresisBox" Grid.Row="1" Grid.Column="1" Margin="0,3" />
+                    <TextBlock Grid.Row="2" Text="Deepdom safety (0.1 to 1)" VerticalAlignment="Center"
+                               ToolTip="Higher follows closer but is less safe when Deepdom stalls." />
+                    <TextBox x:Name="SafetyBox" Grid.Row="2" Grid.Column="1" Margin="0,3" />
+                    <TextBlock Grid.Row="3" Text="Forward when behind by (s)" VerticalAlignment="Center"
+                               ToolTip="Deepchart then jumps to the minute Deepdom shows." />
+                    <TextBox x:Name="CatchUpBox" Grid.Row="3" Grid.Column="1" Margin="0,3" />
+                </Grid>
+                <TextBlock x:Name="SettingsMessage" Style="{StaticResource Caption}" Margin="0,4" />
+                <DockPanel LastChildFill="False">
+                    <Button x:Name="ApplySettings" Content="Apply" Width="100" Click="OnApplySettingsClick" />
+                    <Button x:Name="DefaultSettings" Content="Defaults" Margin="8,0,0,0" Click="OnDefaultSettingsClick" />
+                    <CheckBox x:Name="TopmostBox" DockPanel.Dock="Right" Content="Always on top" VerticalAlignment="Center" Click="OnTopmostClick" />
+                </DockPanel>
+            </StackPanel>
+        </Border>
+
+        <Border x:Name="LogPanel" Style="{StaticResource Card}" Visibility="Collapsed">
+            <TextBox x:Name="LogBox" Height="170" IsReadOnly="True" FontFamily="Consolas" FontSize="11" TextWrapping="Wrap"
+                     BorderThickness="0" VerticalScrollBarVisibility="Auto" />
+        </Border>
+    </StackPanel>
+</Window>

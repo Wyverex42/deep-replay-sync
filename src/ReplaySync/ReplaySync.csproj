@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!--
-    Keeps the Deepchart and Deepdom replays close: reads both replay clocks through UI Automation, measures the
-    drift at each minute rollover and, when enabled, pauses the app which is ahead until the other catches up.
+    Keeps the Deepchart replay from getting ahead of the Deepdom replay: the sync engine and its console front end.
+    The desktop app (src/ReplaySync.App) uses the same engine.
   -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -10,6 +10,10 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="DeepReplaySync" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="FlaUI.UIA3" Version="5.0.0" />

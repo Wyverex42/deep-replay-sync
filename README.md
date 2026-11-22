@@ -11,7 +11,8 @@ replay windows through Windows UI Automation and pauses Deepchart whenever it ge
 
 | Path | What |
 |---|---|
-| [src/ReplaySync](src/ReplaySync) | The sync tool (console). |
+| [src/ReplaySync.App](src/ReplaySync.App) | The desktop app. |
+| [src/ReplaySync](src/ReplaySync) | The sync engine and its console front end. |
 | [src/ReplayProbe](src/ReplayProbe) | Read-only UI Automation probe: dumps what the two apps expose. Used to find the controls. |
 | [scripts/uia.ps1](scripts/uia.ps1) | Small PowerShell UI Automation helper for poking at the replay windows by hand. |
 | [docs/findings.md](docs/findings.md) | Everything learned about the two apps, the measurements, the sync algorithm and the open issues. |
@@ -23,6 +24,13 @@ replay windows through Windows UI Automation and pauses Deepchart whenever it ge
 - If the apps run as administrator, the tools must too (otherwise UI Automation sees nothing).
 
 ## Quick start
+
+```bash
+cd src/ReplaySync.App
+dotnet run                                        # the desktop app
+```
+
+Or in the console:
 
 ```bash
 cd src/ReplaySync

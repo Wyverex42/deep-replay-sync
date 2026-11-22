@@ -23,6 +23,11 @@ sealed class ReplayClock(bool upperBound, double initialRate, double bias)
     double _nominalSinceAnchor; // replay seconds the app should have played since the anchor at its speed setting
     int _rateSamples;
 
+    /// <summary>The factor on the rate for the bound. Adjustable while running.</summary>
+    public double Bias { get; set; } = bias;
+    /// <summary>False while Rate is still the assumed one.</summary>
+    public bool RateMeasured => _rateSamples > 0;
+
     /// <summary>Conservative replay time: never below the real one for an upper bound clock, never above for a lower.</summary>
     public DateTime Bound => Anchored ? _bound
         : upperBound ? DisplayedMinute!.Value.AddSeconds(59.9) : DisplayedMinute!.Value;
@@ -52,7 +57,7 @@ sealed class ReplayClock(bool upperBound, double initialRate, double bias)
                 {
                     var max = minute.AddSeconds(59.9);
                     Estimate = Min(Estimate.AddSeconds(nominal * Rate), max);
-                    _bound = Min(_bound.AddSeconds(nominal * Rate * bias), max);
+                    _bound = Min(_bound.AddSeconds(nominal * Rate * Bias), max);
                 }
             }
             return false;

@@ -11,6 +11,8 @@ in [docs/findings.md](../../docs/findings.md).
   Deepchart is paused when its upper bound is less than `--margin` seconds behind Deepdom's lower bound, and resumed
   when it is `--margin + --hysteresis` behind. Every uncertainty (no rollover seen yet, Deepdom frozen, crashed, paused
   by hand) therefore holds Deepchart back.
+- **A changed Deepdom time counts only after its next rollover while playing.** Until then Deepchart is held, as text
+  typed into the date box looks exactly like a new replay time. A clean start needs no such wait.
 - **Frequent short pauses are fine**: Deepchart is only used for 5 minute bars and levels.
 - Only the Replay Manage windows are touched (Play, Pause, date box, Set, Reset, Forward). Never the chart or DOM
   windows, which contain order buttons.
@@ -40,7 +42,10 @@ The date must be typed the way the date box shows it (e.g. `06/01/2026 10:15`).
 
 | File | What |
 |---|---|
-| `Program.cs` | Options, the polling loop, the correction rule, the clean start, the console output and keys. |
+| `Program.cs` | The console front end: options, status lines, keys. |
+| `SyncController.cs` | The sync: polling, the correction rule, catch-up, the clean start. Shared with the desktop app. |
+| `SyncOptions.cs` | The tuning values and their defaults. |
+| `SyncSnapshot.cs` | The immutable state a front end shows. |
 | `ReplayApp.cs` | One app's Replay Manage window: find it, read clock / playing / speed, Play, Pause, Forward, Reset + Set. |
 | `ReplayClock.cs` | Sub-minute replay time from a minute display: rollover anchors, rate learning, conservative bounds. |
 
