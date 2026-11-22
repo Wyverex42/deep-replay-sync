@@ -1,6 +1,6 @@
 // ReplaySync: keeps the Deepchart replay from getting ahead of the Deepdom replay.
 //
-// Deepdom is where the trades happen, so its replay is never touched while syncing: only Deepchart is paused and
+// Deepdom is where the trades happen, so syncing never touches its replay: only Deepchart is paused and
 // resumed. The rule is one-sided: Deepchart must never show what Deepdom has not played yet. Deepchart's time is
 // taken as an upper bound and Deepdom's as a lower bound, so every uncertainty (no rollover seen yet, Deepdom
 // frozen, crashed or paused by hand) holds Deepchart back rather than letting it run ahead.
@@ -13,8 +13,6 @@
 //   --poll <ms>         clock polling interval (default 200). The rollover moment is known to +/- one poll,
 //                       which at speed xN is N times as many replay seconds.
 //   --freeze-ms <ms>    an app which does not answer within this time counts as frozen (default 500)
-//   --dom-rate <r>      Deepdom's rate before it is measured (default 0.6: it plays slower than its speed setting)
-//   --dom-safety <f>    Deepdom's lower bound advances at its measured rate times this factor (default 0.8)
 //   --catch-up <s>      Forward Deepchart to the minute Deepdom shows when it is more than this far behind (default 90)
 //   --status <s>        print a status line every s wall seconds (default 5)
 //   --verbose           log every pause and resume
@@ -25,7 +23,7 @@
 //   --forward-wait <s>  Forward gives no feedback: wall seconds to wait for it (default 5)
 //   --load-timeout <s>  how long to wait for Reset + Set to load (default 180)
 //
-// Keys:  A = toggle correction   P = play both   Space = pause both   Q = quit
+// Keys:  A = toggle correction   P = play (sync on)   Space = pause both (sync off)   Q = quit
 //
 // This is only the console front end. The sync itself is SyncController.cs, shared with the desktop app.
 
@@ -36,7 +34,7 @@ bool auto = false, verbose = false;
 var defaults = new SyncOptions();
 double margin = defaults.Margin, hysteresis = defaults.Hysteresis, statusEvery = 5;
 double forwardWait = defaults.ForwardWait, loadTimeout = defaults.LoadTimeout;
-double domRate = defaults.DomRate, domSafety = defaults.DomSafety, catchUp = defaults.CatchUp;
+double catchUp = defaults.CatchUp;
 int pollMs = defaults.PollMs, freezeMs = defaults.FreezeMs;
 string? startText = null;
 for (int i = 0; i < args.Length; i++)
@@ -50,8 +48,6 @@ for (int i = 0; i < args.Length; i++)
         case "--hysteresis": hysteresis = Num(); break;
         case "--poll": pollMs = (int)Num(); break;
         case "--freeze-ms": freezeMs = (int)Num(); break;
-        case "--dom-rate": domRate = Num(); break;
-        case "--dom-safety": domSafety = Num(); break;
         case "--catch-up": catchUp = Num(); break;
         case "--status": statusEvery = Num(); break;
         case "--start": startText = args[++i]; break;
@@ -63,15 +59,15 @@ for (int i = 0; i < args.Length; i++)
 
 var options = new SyncOptions
 {
-    Margin = margin, Hysteresis = hysteresis, PollMs = pollMs, FreezeMs = freezeMs, DomRate = domRate,
-    DomSafety = domSafety, CatchUp = catchUp, ForwardWait = forwardWait, LoadTimeout = loadTimeout, Verbose = verbose,
+    Margin = margin, Hysteresis = hysteresis, PollMs = pollMs, FreezeMs = freezeMs,
+    CatchUp = catchUp, ForwardWait = forwardWait, LoadTimeout = loadTimeout, Verbose = verbose,
 };
 using var sync = new SyncController(options, Log);
 sync.SetCorrection(auto);
 bool interactive = !Console.IsInputRedirected;
 
 Log($"Margin {margin}s, hysteresis {hysteresis}s, poll {pollMs} ms, freeze after {freezeMs} ms, correction {(auto ? "ON" : "OFF")}.");
-if (interactive) Log("Keys: A = toggle correction, P = play both, Space = pause both, Q = quit");
+if (interactive) Log("Keys: A = toggle correction, P = play (sync on), Space = pause both (sync off), Q = quit");
 
 Console.CancelKeyPress += (_, _) => sync.ReleaseChart("quitting");
 
@@ -107,10 +103,10 @@ while (true)
                     Log($"Correction {(sync.SyncOn ? "ON" : "OFF")}");
                     break;
                 case ConsoleKey.P:
-                    sync.PlayBoth();
+                    sync.Play();
                     break;
                 case ConsoleKey.Spacebar:
-                    sync.PauseBoth();
+                    sync.Pause();
                     break;
                 case ConsoleKey.Q:
                     sync.ReleaseChart("quitting");

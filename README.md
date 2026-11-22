@@ -19,7 +19,7 @@ replay windows through Windows UI Automation and pauses Deepchart whenever it ge
 
 ## Requirements
 
-- Windows, the .NET 10 SDK.
+- Windows 11, the .NET 10 SDK.
 - Deepchart and Deepdom running, each with its **Replay Manage** window open.
 - If the apps run as administrator, the tools must too (otherwise UI Automation sees nothing).
 
@@ -27,7 +27,7 @@ replay windows through Windows UI Automation and pauses Deepchart whenever it ge
 
 ```bash
 cd src/ReplaySync.App
-dotnet run                                        # the desktop app
+dotnet run -c Release                             # the desktop app
 ```
 
 Or in the console:
@@ -39,7 +39,7 @@ dotnet run -- --auto                              # sync replays which are alrea
 dotnet run                                        # measure only, touch nothing
 ```
 
-Keys: `A` toggles the correction, `P` plays, `Space` pauses both, `Q` quits. See the header of
+Keys: `A` toggles the correction, `P` plays in sync, `Space` pauses both, `Q` quits. See the header of
 [src/ReplaySync/Program.cs](src/ReplaySync/Program.cs) or [src/ReplaySync/README.md](src/ReplaySync/README.md) for all
 options.
 

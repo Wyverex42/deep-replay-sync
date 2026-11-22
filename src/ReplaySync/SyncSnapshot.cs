@@ -8,7 +8,8 @@ sealed record AppSnapshot(
     DateTime Estimate,
     bool Anchored,
     double Rate,
-    bool RateMeasured);
+    bool RateMeasured,
+    bool ToTheSecond);
 
 /// <summary>
 /// Everything a front end shows. Ahead and AheadBound are replay seconds, positive when Deepchart is ahead of Deepdom:
@@ -20,6 +21,7 @@ sealed record SyncSnapshot(
     bool SyncOn,
     bool ChartHeld,
     bool DomUnconfirmed,
+    bool DomTimeIsRough,
     double? Ahead,
     double? AheadBound,
     int Pauses,

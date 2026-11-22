@@ -2,7 +2,9 @@
   <!-- The desktop app. The sync engine is in src/ReplaySync, shared with the console. -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <!-- Windows 11: borderless window capture, which the screen clocks use -->
+    <SupportedOSPlatformVersion>10.0.22000.0</SupportedOSPlatformVersion>
     <UseWPF>true</UseWPF>
     <AssemblyName>DeepReplaySync</AssemblyName>
     <RootNamespace>DeepReplaySync</RootNamespace>

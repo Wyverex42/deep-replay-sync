@@ -5,30 +5,39 @@ shared with the console.
 
 ```bash
 cd src/ReplaySync.App
-dotnet run
+dotnet run -c Release
 ```
+
+Needs Windows 11 (borderless window capture).
 
 ## Use
 
-- **On launch nothing is pressed.** The sync is off and the window only measures.
-- **Start sync** lets the tool pause and resume Deepchart. Deepdom is not touched.
-- **Let Deepchart follow** is for a Deepchart which was paused by hand: the sync resumes it once it is safely behind.
-- **Stop sync** and **closing the window** leave Deepchart paused when it was syncing. (The console resumes it.)
-- **Clean start** is the only thing which touches Deepdom: after a confirmation it resets both replays to a minute,
-  plays them and turns the sync on. It can be cancelled while loading. A failed or cancelled one leaves the sync off.
-- **Settings** are margin, hysteresis, Deepdom safety and catch-up (see [the options](../ReplaySync/README.md#options)).
-  They are saved in `%LOCALAPPDATA%\DeepReplaySync\settings.json`.
+- **On launch nothing is pressed.**
+- **Play** plays Deepdom and syncs: Deepchart starts by itself as soon as it is safely behind, and is paused and
+  resumed from then on. While syncing a Deepchart paused by hand follows again.
+- **Pause** pauses both and ends the sync. To run just one app, pause here and use that app's own replay window.
+- **Closing the window** while syncing pauses Deepchart and leaves Deepdom as it is.
+- **Clean start** resets both replays to a minute and plays them in sync, after a confirmation.
+- **Settings** are margin, hysteresis and catch-up. Saved in `%LOCALAPPDATA%\DeepReplaySync\settings.json`.
 
-There are deliberately no Play / Pause buttons for Deepdom and no keyboard shortcuts.
+## For a small gap
+
+The app reads the seconds from the two chart windows:
+
+- **Deepdom**: the time axis at the bottom of the chart. Keep it visible, not scrolled back, not zoomed far out.
+- **Deepchart**: the bar countdown at the bottom right. Use bars of one minute or more.
+
+The windows can be covered but not minimized. Without the seconds Deepchart is held until each minute change: safe,
+but up to a minute or so behind. Each app's line says "reading seconds" or "minute clock only".
 
 ## The banner
 
 | Colour | Meaning |
 |---|---|
-| Grey | Sync off, measuring only |
-| Green | Following, including the short pauses |
-| Amber | Deepchart is held or paused, the text says why |
-| Red | Not guarded or ahead: sync off while Deepchart plays, not responding, not found, not updating |
+| Grey | Paused |
+| Green | Playing in sync, including the short pauses |
+| Amber | Deepchart is held, the text says why. Or Deepdom plays without the sync |
+| Red | Not guarded or ahead: Deepchart plays by itself, not responding, not found, not updating |
 
 The large number is the best guess of the gap. "Worst case" below it is what the sync decides on.
 

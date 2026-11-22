@@ -8,8 +8,8 @@ enum Level { Idle, Good, Holding, Danger }
 /// </summary>
 readonly record struct Banner(Level Level, string Title, string Detail)
 {
-    // A worst case below this is within what the rollover timing can resolve
-    const double ClearlyAhead = 0.5;
+    // A worst case below this is within what the clocks can resolve
+    const double ClearlyAhead = 2;
 
     public static Banner For(SyncSnapshot s)
     {
@@ -29,7 +29,8 @@ readonly record struct Banner(Level Level, string Title, string Detail)
         if (!chart.Responding)
             return new(s.SyncOn ? Level.Danger : Level.Idle, "Deepchart is not responding", "It can not be paused until it answers.");
 
-        if (s is { Ahead: > 0, AheadBound: > ClearlyAhead })
+        // While Deepdom's time is only a rough lower bound, "ahead" would mostly be a false alarm
+        if (s is { Ahead: > 0, AheadBound: > ClearlyAhead, DomTimeIsRough: false })
         {
             return new(Level.Danger, "Deepchart is ahead", chartPlaying
                 ? "It is playing past what Deepdom has played."
@@ -38,9 +39,11 @@ readonly record struct Banner(Level Level, string Title, string Detail)
 
         if (!s.SyncOn)
         {
-            return chartPlaying
-                ? new(Level.Danger, "Sync is off", "Deepchart is playing and nothing holds it back.")
-                : new(Level.Idle, "Sync is off", "Only measuring. Nothing is pressed in either app.");
+            if (chartPlaying)
+                return new(Level.Danger, "Not in sync", "Deepchart is playing by itself. Press Play to sync both.");
+            if (domPlaying)
+                return new(Level.Holding, "Not in sync", "Deepdom is playing by itself. Press Play to sync both.");
+            return new(Level.Idle, "Paused", "Play runs both replays in sync.");
         }
 
         string state = chartPlaying ? "Pausing Deepchart" : "Holding Deepchart";
@@ -48,18 +51,18 @@ readonly record struct Banner(Level Level, string Title, string Detail)
             return new(Level.Holding, state, "Deepdom's Replay Manage window was not found.");
         if (!dom.Responding)
             return new(Level.Holding, chartPlaying ? "Deepdom is not responding" : state, "Deepdom's time is not credited until it answers.");
-        if (!chartPlaying && !s.ChartHeld)
-            return new(Level.Holding, "Deepchart is paused", "Not paused by the sync. Let it follow to resume it when that is safe.");
         if (s.DomUnconfirmed)
             return new(Level.Holding, state, "Deepdom's time changed. Waiting for its next minute to confirm it.");
+        if (domPlaying && !dom.ToTheSecond)
+            return new(Level.Holding, state, "Can not read the seconds in Deepdom. Keep its chart and time axis visible.");
         if (chartPlaying)
-            return new(Level.Good, "Following Deepdom", "Deepchart plays while it is safely behind.");
+            return new(Level.Good, "Playing in sync", "Deepchart follows just behind Deepdom.");
         if (!domPlaying)
-            return new(Level.Holding, state, "Deepdom is paused. Play it in Deepdom.");
+            return new(Level.Holding, "Deepdom is paused", "Deepchart waits. Play continues both.");
         if (!chart.Anchored || !dom.Anchored)
             return new(Level.Holding, state, "The exact times are known at each app's next minute change.");
-        if (s.AheadBound is null or > 0)
-            return new(Level.Holding, state, "It may be ahead. Waiting until Deepdom has certainly passed it.");
-        return new(Level.Good, "Following Deepdom", "Short pause to stay behind.");
+        if (s.AheadBound is null or > ClearlyAhead)
+            return new(Level.Holding, state, "Waiting until Deepdom has certainly passed it.");
+        return new(Level.Good, "Playing in sync", "Deepchart follows just behind Deepdom.");
     }
 }

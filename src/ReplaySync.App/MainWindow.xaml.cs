@@ -24,7 +24,8 @@ public partial class MainWindow : Window
     readonly DispatcherTimer _refresh;
 
     string? _confirmedDate;
-    long? _syncRequestedAt;
+    long? _requestedAt;
+    bool _offersPause;
     bool _closing, _closed;
 
     public MainWindow()
@@ -51,7 +52,7 @@ public partial class MainWindow : Window
         {
             ShowBanner(new(Level.Danger, "The sync stopped", $"Pause Deepchart by hand and restart this app. {fatal}"));
             GapText.Text = None;
-            SyncButton.IsEnabled = FollowButton.IsEnabled = StartButton.IsEnabled = false;
+            PlayPauseButton.IsEnabled = StartButton.IsEnabled = false;
             return;
         }
         if (_runner.Latest is not { } status) return;
@@ -68,13 +69,15 @@ public partial class MainWindow : Window
         ShowApp(s.Chart, ChartTime, ChartState);
         ShowStats(s);
 
+        // Pause whenever something runs in sync or that can not be told, so pausing is always one click
+        _offersPause = s.SyncOn && (!s.Dom.Connected || !s.Dom.Responding || s.Dom.Reading is { Playing: true }
+                                    || s.Chart.Reading is { Playing: true });
         // A command is pending until a newer status arrives: a second click must not undo the first
-        if (_syncRequestedAt is { } requested && status.PublishedAt > requested) _syncRequestedAt = null;
-        SyncButton.IsEnabled = !working && !_runner.CleanStarting && _syncRequestedAt is null;
-        SyncButton.Content = s.SyncOn ? "Stop sync (pauses chart)" : "Start sync";
-        SyncButton.Background = Brush(s.SyncOn ? "Raised" : "Accent");
-        FollowButton.IsEnabled = !working && s is { SyncOn: true, ChartHeld: false, Chart.Connected: true }
-                                 && s.Chart.Reading is { Playing: false };
+        if (_requestedAt is { } requested && status.PublishedAt > requested) _requestedAt = null;
+        PlayPauseButton.IsEnabled = !working && !_runner.CleanStarting && _requestedAt is null
+                                    && (_offersPause || (s.Chart.Connected && s.Dom.Connected));
+        PlayPauseButton.Content = _offersPause ? "Pause" : "Play";
+        PlayPauseButton.Background = Brush(_offersPause ? "Raised" : "Accent");
 
         UpdateStartPanel(status);
     }
@@ -103,7 +106,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (s is { Ahead: not null, AheadBound: > 0 })
+        if (s is { Ahead: >= 0, AheadBound: > 0 })
         {
             // The best guess may say behind, but that is not certain
             GapText.Text = "May be ahead";
@@ -111,8 +114,8 @@ public partial class MainWindow : Window
         }
         else if (s.Ahead is { } ahead)
         {
-            GapText.Text = ahead > 0 ? $"{ahead:0.0} s ahead" : $"{-ahead:0.0} s behind";
-            GapText.Foreground = Brush(ahead > 0 ? "DangerText" : "GoodText");
+            GapText.Text = ahead > 0 ? $"{ahead:0.0} s ahead" : $"~{-ahead:0.0} s behind";
+            GapText.Foreground = Brush(ahead > 0 ? "DangerText" : s.AheadBound > 0 ? "WarningText" : "GoodText");
         }
         else
         {
@@ -139,7 +142,7 @@ public partial class MainWindow : Window
             : !app.Responding ? "Not responding"
             : app.Reading is not { } r ? "Connected"
             : r.Minute is null ? $"Can not read the date \"{r.Text}\""
-            : $"{(r.Playing ? "Playing" : "Paused")}, speed x{r.Speed}, rate {app.Rate:0.00} {(app.RateMeasured ? "measured" : "assumed")}";
+            : $"{(r.Playing ? "Playing" : "Paused")}, x{r.Speed}, rate {app.Rate:0.00} {(app.RateMeasured ? "measured" : "assumed")}, {(app.ToTheSecond ? "reading seconds" : "minute clock only")}";
     }
 
     void ShowStats(SyncSnapshot s)
@@ -196,28 +199,24 @@ public partial class MainWindow : Window
     // Space is a habit in replay software: a clicked button must not keep the focus and fire again on Space
     void DropFocus()
     {
+        // Both calls activate the window, which would steal the focus when pressed from another program
+        if (!IsActive) return;
         FocusManager.SetFocusedElement(this, this);
         Keyboard.Focus(this);
     }
 
-    // Sync
+    // Play and Pause
 
-    void OnSyncClick(object sender, RoutedEventArgs e)
+    void OnPlayPauseClick(object sender, RoutedEventArgs e)
     {
         DropFocus();
-        if (_runner.Latest is not { } status) return;
-        SyncButton.IsEnabled = false;
-        _syncRequestedAt = Stopwatch.GetTimestamp();
-        if (status.Sync.SyncOn) _runner.DisableSync();
-        else _runner.EnableSync();
+        PlayPauseButton.IsEnabled = false;
+        _requestedAt = Stopwatch.GetTimestamp();
+        // What the button said when it was clicked
+        if (_offersPause) _runner.Pause();
+        else _runner.Play();
     }
 
-    void OnFollowClick(object sender, RoutedEventArgs e)
-    {
-        DropFocus();
-        FollowButton.IsEnabled = false;
-        _runner.Follow();
-    }
 
     // Not Click: toggling through UI Automation (screen readers) does not raise it
     void OnTabChanged(object sender, RoutedEventArgs e)
@@ -287,7 +286,7 @@ public partial class MainWindow : Window
         DropFocus();
         if (_confirmedDate is not { } date) return;
         _confirmedDate = null;
-        SyncButton.IsEnabled = false;
+        PlayPauseButton.IsEnabled = false;
         StartConfirm.Visibility = Visibility.Collapsed;
         StartRunning.Visibility = Visibility.Visible;
         _runner.CleanStart(date);
@@ -305,7 +304,6 @@ public partial class MainWindow : Window
     {
         MarginBox.Text = s.Margin.ToString(CultureInfo.InvariantCulture);
         HysteresisBox.Text = s.Hysteresis.ToString(CultureInfo.InvariantCulture);
-        SafetyBox.Text = s.DomSafety.ToString(CultureInfo.InvariantCulture);
         CatchUpBox.Text = s.CatchUp.ToString(CultureInfo.InvariantCulture);
     }
 
@@ -323,11 +321,10 @@ public partial class MainWindow : Window
             double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : double.NaN;
 
         double margin = Parse(MarginBox.Text), hysteresis = Parse(HysteresisBox.Text);
-        double safety = Parse(SafetyBox.Text), catchUp = Parse(CatchUpBox.Text);
+        double catchUp = Parse(CatchUpBox.Text);
 
-        string? error = !Settings.ValidMargin(margin) ? "Pause closer than: 0 to 60 seconds."
+        string? error = !Settings.ValidMargin(margin) ? "Pause closer than: 0.5 to 60 seconds."
             : !Settings.ValidHysteresis(hysteresis) ? "Resume after a further: 0 to 60 seconds."
-            : !Settings.ValidSafety(safety) ? "Deepdom safety: 0.1 to 1."
             : !Settings.ValidCatchUp(catchUp) ? "Forward when behind by: 30 to 86400 seconds."
             : null;
         if (error is not null)
@@ -336,7 +333,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        (_settings.Margin, _settings.Hysteresis, _settings.DomSafety, _settings.CatchUp) = (margin, hysteresis, safety, catchUp);
+        (_settings.Margin, _settings.Hysteresis, _settings.CatchUp) = (margin, hysteresis, catchUp);
         _runner.ApplyTuning(_settings);
         SettingsMessage.Text = _settings.Save() is { } failed ? $"Applied, but not saved: {failed}" : "Applied and saved.";
     }

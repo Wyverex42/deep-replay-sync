@@ -42,15 +42,14 @@ sealed class SyncRunner
     public bool CleanStarting => _cleanStarting;
     public bool TryTakeLog(out string line) => _log.TryDequeue(out line!);
 
-    public void EnableSync() => Post(c => c.EnableSync());
-    public void DisableSync() => Post(c => c.DisableSync());
-    public void Follow() => Post(c => c.Follow());
+    public void Play() => Post(c => c.Play());
+    public void Pause() => Post(c => c.Pause());
 
     public void ApplyTuning(Settings s)
     {
         // Read now, on the UI thread
-        double margin = s.Margin, hysteresis = s.Hysteresis, safety = s.DomSafety, catchUp = s.CatchUp;
-        Post(c => c.ApplyTuning(margin, hysteresis, safety, catchUp));
+        double margin = s.Margin, hysteresis = s.Hysteresis, catchUp = s.CatchUp;
+        Post(c => c.ApplyTuning(margin, hysteresis, catchUp));
     }
 
     public void CleanStart(string text)

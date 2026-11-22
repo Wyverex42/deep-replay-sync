@@ -5,24 +5,24 @@ in [docs/findings.md](../../docs/findings.md).
 
 ## Rules
 
-- **Deepdom is the reference and is never touched while syncing.** Only Deepchart is paused and resumed. Deepdom is
-  only touched by a clean start (`--start`) and by the `P` / `Space` keys.
+- **Deepdom is the reference.** Syncing only pauses and resumes Deepchart. Deepdom is only pressed by Play, Pause
+  (the app's button, the console's `P` / `Space`) and a clean start.
 - **Deepchart must never be ahead.** Deepchart's replay time is taken as an upper bound, Deepdom's as a lower bound.
   Deepchart is paused when its upper bound is less than `--margin` seconds behind Deepdom's lower bound, and resumed
-  when it is `--margin + --hysteresis` behind. Every uncertainty (no rollover seen yet, Deepdom frozen, crashed, paused
-  by hand) therefore holds Deepchart back.
+  when it is `--margin + --hysteresis` behind.
+- **Deepdom's lower bound is never extrapolated.** It moves only with what was seen: a label on its time axis, or a
+  minute change. No assumed rate is safe.
 - **A changed Deepdom time counts only after its next rollover while playing.** Until then Deepchart is held, as text
   typed into the date box looks exactly like a new replay time. A clean start needs no such wait.
-- **Frequent short pauses are fine**: Deepchart is only used for 5 minute bars and levels.
-- Only the Replay Manage windows are touched (Play, Pause, date box, Set, Reset, Forward). Never the chart or DOM
-  windows, which contain order buttons.
+- **While syncing Deepchart always follows.** Both run in sync or neither does.
+- Only the Replay Manage windows get input. The chart windows are only looked at (pixels). Nothing takes the focus.
 
 ## How the replay time is known
 
-The start date box of each Replay Manage window shows the live replay time while playing, with minute resolution. The
-moment it rolls over (09:18 to 09:19) the replay is exactly at 09:19:00. Between rollovers the time is extrapolated
-from the speed setting and each app's measured rate (Deepdom plays at about 0.65 to 0.9 of its speed setting). See
-`ReplayClock.cs`.
+1. The start date box of each Replay Manage window shows the minute. When it rolls over the replay is exactly at
+   hh:mm:00 (`ReplayClock.cs`).
+2. The seconds are read from pixels (`Screen/`): Deepdom's right-most time axis label and Deepchart's bar countdown.
+   `ScreenTime.cs` holds the rules for when those may be trusted.
 
 ## Run
 
@@ -33,8 +33,8 @@ dotnet run -- --auto                              # sync replays which are alrea
 dotnet run                                        # measure only
 ```
 
-Keys: `A` toggles the correction, `P` plays (Deepdom; Deepchart follows when the correction is on), `Space` pauses
-both, `Q` quits.
+Keys: `A` toggles the correction, `P` plays in sync (turns the correction on), `Space` pauses both and turns it off,
+`Q` quits.
 
 The date must be typed the way the date box shows it (e.g. `06/01/2026 10:15`).
 
@@ -47,7 +47,12 @@ The date must be typed the way the date box shows it (e.g. `06/01/2026 10:15`).
 | `SyncOptions.cs` | The tuning values and their defaults. |
 | `SyncSnapshot.cs` | The immutable state a front end shows. |
 | `ReplayApp.cs` | One app's Replay Manage window: find it, read clock / playing / speed, Play, Pause, Forward, Reset + Set. |
-| `ReplayClock.cs` | Sub-minute replay time from a minute display: rollover anchors, rate learning, conservative bounds. |
+| `ReplayClock.cs` | One replay clock: minute anchors, the bounds, the best guess. |
+| `Screen/WindowCapture.cs` | Pixels of a window region through Windows Graphics Capture. |
+| `Screen/ClockReaders.cs` | Find and read Deepdom's axis label and Deepchart's countdown. |
+| `Screen/DigitReader.cs` | Reads the digits by matching rendered Segoe UI ones. |
+| `Screen/ScreenTime.cs` | When a time read from pixels may be trusted. Pure logic. |
+| `Screen/ScreenClocks.cs` | The thread which finds the windows and keeps reading them. |
 
 ## Options
 
@@ -58,8 +63,6 @@ The date must be typed the way the date box shows it (e.g. `06/01/2026 10:15`).
 | `--hysteresis <s>` | 0.5 | resume it once it is margin + this behind |
 | `--poll <ms>` | 200 | clock polling interval. Faster polling seemed to slow Deepdom down (see findings) |
 | `--freeze-ms <ms>` | 500 | UI Automation timeout: an app which does not answer within this time counts as frozen |
-| `--dom-rate <r>` | 0.6 | Deepdom's rate before it is measured |
-| `--dom-safety <f>` | 0.8 | Deepdom's lower bound advances at its measured rate times this. Higher = Deepchart closer, less safe |
 | `--catch-up <s>` | 90 | when Deepchart is further behind, Forward it to the minute Deepdom shows |
 | `--status <s>` | 5 | status line interval |
 | `--verbose` | off | log every pause and resume |

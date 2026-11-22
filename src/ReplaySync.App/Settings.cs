@@ -11,14 +11,12 @@ sealed class Settings
 
     public double Margin { get; set; } = Defaults.Margin;
     public double Hysteresis { get; set; } = Defaults.Hysteresis;
-    public double DomSafety { get; set; } = Defaults.DomSafety;
     public double CatchUp { get; set; } = Defaults.CatchUp;
     public bool AlwaysOnTop { get; set; }
 
     // A value outside these could let Deepchart get ahead
-    public static bool ValidMargin(double v) => v is >= 0 and <= 60;
+    public static bool ValidMargin(double v) => v is >= 0.5 and <= 60;
     public static bool ValidHysteresis(double v) => v is >= 0 and <= 60;
-    public static bool ValidSafety(double v) => v is >= 0.1 and <= 1;
     public static bool ValidCatchUp(double v) => v is >= 30 and <= 86400;
 
     public static Settings Load()
@@ -27,7 +25,7 @@ sealed class Settings
         {
             if (File.Exists(FilePath)
                 && JsonSerializer.Deserialize<Settings>(File.ReadAllText(FilePath)) is { } s
-                && ValidMargin(s.Margin) && ValidHysteresis(s.Hysteresis) && ValidSafety(s.DomSafety) && ValidCatchUp(s.CatchUp))
+                && ValidMargin(s.Margin) && ValidHysteresis(s.Hysteresis) && ValidCatchUp(s.CatchUp))
             {
                 return s;
             }
@@ -58,7 +56,6 @@ sealed class Settings
     {
         Margin = Margin,
         Hysteresis = Hysteresis,
-        DomSafety = DomSafety,
         CatchUp = CatchUp,
     };
 }

@@ -8,10 +8,6 @@ sealed class SyncOptions
     public int PollMs { get; init; } = 200;
     /// <summary>An app which does not answer within this time counts as frozen.</summary>
     public int FreezeMs { get; init; } = 500;
-    /// <summary>Deepdom's rate before it is measured.</summary>
-    public double DomRate { get; init; } = 0.6;
-    /// <summary>Deepdom's lower bound advances at its measured rate times this.</summary>
-    public double DomSafety { get; set; } = 0.8;
     /// <summary>Forward Deepchart when it is further behind than this.</summary>
     public double CatchUp { get; set; } = 90;
     /// <summary>Forward gives no feedback: wall seconds to wait for it.</summary>

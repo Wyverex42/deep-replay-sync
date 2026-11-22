@@ -77,16 +77,23 @@ loading after Set).
 - After a Forward of 23 minutes, a Play pressed ~3 minutes later timed out (500 ms UI Automation timeout): Deepchart
   was busy. Hence Play/Pause are now retried until the state changes (`ReplayApp.EnsurePlaying`).
 
-## What is not accessible
+## What is only accessible as pixels
 
 - The **chart and DOM contents** (axes, bars, countdown timer, time & sales, ladder) are drawn into native child
-  windows (`HwndHost` → `HwndWrapper`) with **no UI Automation children**, also in the raw view. The time axis labels
-  and Deepchart's bar countdown can not be read. OCR on screenshots would be the only way. Rejected: the Deepdom axis
-  labels give the time of past bars, not the current time (pixel distance would have to be converted to time, which
-  breaks on zoom/scroll), tiny fonts make OCR error prone, and the window must be visible. Deepchart's countdown would
-  give 1 s resolution, but Deepchart is not the side that needs it.
+  windows (`HwndHost` → `HwndWrapper`) with **no UI Automation children**, also in the raw view.
+- **Deepdom's time axis** is the one fine clock of Deepdom. Its **right-most label sits at a fixed position and
+  advances every second**, showing the replay time minus a constant which depends on the zoom (about 3.8 s at 28 s
+  between labels, 66 px). The constant is calibrated at every minute change. An earlier session rejected the axis as
+  "past bars only, breaks on zoom": recording it while playing showed otherwise.
+- **Deepchart's bar countdown** shows `bar length - seconds into the bar`, rounded up: `00:24` on 1 minute bars is
+  second 36.0 to 36.99. It is redrawn up to ~0.6 s late.
+- Both are read by matching rendered Segoe UI digits: 261 of 261 recorded frames right. The Windows OCR engine read
+  only 60 % of the small axis labels.
+- **Capture**: use Windows Graphics Capture and copy only the needed strip. `PrintWindow` took 135 ms of Deepdom's
+  UI thread per image. Copying whole windows from the GPU cost ~20 % of a CPU core per window, the strips ~1 %.
+- **Deepdom's log files are encrypted**: left alone.
 - The main DOM and chart windows contain **order buttons** (`btnBuyMkt`, `btnSellMkt`, `btnBuyLmt`, ...). The tools
-  must never touch anything outside the Replay Manage windows.
+  never send anything outside the Replay Manage windows.
 
 ## UI Automation behaviour
 
@@ -99,6 +106,10 @@ loading after Set).
 - **Polling may load Deepdom.** At 50 ms polling Deepdom played at 0.65x and once stopped answering UI Automation for
   ~15 s; at 200 ms it played at 0.85 to 0.89x with no freezes. Two runs only, different market periods: suggestive,
   not proven. Default is now 200 ms.
+- **`AutoSetFocus` is on by default** and makes every Invoke and SetValue activate the target window and move the
+  keyboard focus into it. With presses every 1.5 s the PC was unusable. `IUIAutomation2.AutoSetFocus = 0` fixes it,
+  presses work the same.
+- In WPF, `Keyboard.Focus` and `FocusManager.SetFocusedElement` on an inactive window activate it.
 
 ## Measurements (x1, Deepdom on the slow laptop)
 
@@ -108,69 +119,61 @@ loading after Set).
 | Uncorrected, clean start at 09:45 | Deepdom needed 66.7 s, 68.5 s, then **106.6 s** for one replay minute (the 15 s freeze). Deepchart 6 s ahead after 1 minute, 60 s after 4 |
 | Deepchart's own rate | 0.93 to 1.01 |
 | Symmetric correction, 3 s tolerance (v1) | Kept within ~3 s, Deepchart in 9 s play / 5 s pause cycles. Rejected: Deepchart could be up to 3 s ahead |
-| One-sided correction (v2, current) | Deepdom 0.85 to 0.89x, **never ahead at any Deepdom rollover** (worst −9.9 s). Deepchart's lag varies from ~1 s just after a Deepdom rollover to ~13 s late in Deepdom's minute (cost of `--dom-safety 0.8`) |
+| One-sided correction (v2) | Deepdom 0.85 to 0.89x, **never ahead at any Deepdom rollover** (worst −9.9 s). Deepchart's lag varies from ~1 s just after a Deepdom rollover to ~13 s late in Deepdom's minute (cost of `--dom-safety 0.8`) |
+| Recording, 85 s at 10:27 | Deepdom **0.57x**, Deepchart 0.96x. v2 would have assumed at least 0.69x after a 0.86x minute: **v2 was not safe** |
+| Seconds from the screen (v3, current), 150 s + 48 s live | Deepdom 0.57x. **Never ahead** (smallest gap 1.8 s), median lag **3.8 s** once calibrated, 5.8 s before the first minute change. No focus taken by either app |
 
-Deepdom's lag is **bursty** (stalls and freezes), not a constant rate.
+Deepdom's lag is **bursty** (stalls and freezes) and its rate varies: never extrapolate it.
+At 0.57x Deepchart has to be paused about 40 % of the time whatever the algorithm: it plays 1.7 times as fast.
 
-## The sync algorithm (ReplaySync)
+## The sync algorithm (v3)
 
-1. **Clock per app** (`ReplayClock`): each rollover is an exact anchor. Between anchors the time advances by
-   wall time × speed × measured rate. The rate is learned between consecutive rollovers (EMA). Any other change of
-   the displayed minute (Set, Forward, skipped minutes) is a jump: the clock is unanchored until the next rollover.
-2. **Conservative bounds**: Deepchart's clock is an **upper bound** (rate × 1.05; before an anchor: end of the
-   displayed minute). Deepdom's is a **lower bound** (rate × `--dom-safety`; before an anchor: start of the
-   displayed minute). Wall time during which Deepdom did not answer is **not credited** to its time (it counts only
-   for rate learning).
-3. **Rule**: pause Deepchart when `chartUpper > domLower − margin`; resume when
-   `chartUpper ≤ domLower − margin − hysteresis`. This single rule also covers a frozen, crashed or user-paused
-   Deepdom: its lower bound stops moving, so Deepchart is held.
-4. **Only Deepchart is resumed by the tool, and only if the tool paused it.** A Deepchart paused by hand stays paused.
-   If Deepchart is played by hand while it must be held, it is paused again.
-5. **Catch-up**: when Deepchart is more than `--catch-up` seconds behind, it is paused and Forwarded to the minute
-   Deepdom displays (safe: Deepdom is at or past that minute) and anchored there. It then lands up to a minute behind
-   and closes the gap at its full speed.
-6. **Clean start** (`--start`, or the app): pause both, Deepdom Reset → date → Set, Deepchart Forward (or Reset → Set if the date
-   is not ahead), wait until both have Play enabled (detecting a Deepdom crash), wait `--forward-wait`, then Play
-   Deepdom first and Deepchart second, and **anchor both clocks at the start minute** so there is no unprotected
-   first minute.
+1. **Clock per app** (`ReplayClock`): each rollover of the minute display is an exact anchor. Any other change of the
+   displayed minute (Set, Forward, skipped minutes) is a jump: the clock is unanchored until the next rollover.
+2. **Deepdom's lower bound** moves only with what was seen: `label + offset - step` from the axis, where
+   `offset = minute - label` just after a rollover. Before that the label itself, when it is under played data. It
+   is never extrapolated. Without a readable axis it only moves at rollovers.
+3. **Deepchart's upper bound** comes from the moment the countdown changes (or its settled value while paused) and
+   advances at 1.02 x the speed in between. After failed reads it is credited as playing for the whole gap.
+4. **Distrust**: a changed Deepdom minute counts only after a rollover while playing (typed text looks the same), a
+   reset holds at once, a label jumping forward waits for a rollover, a label moving back while playing is a scrolled
+   chart. The rules are in `Screen/ScreenTime.cs`.
+5. **Rule**: pause Deepchart when `chartUpper > domLower − margin`; resume when
+   `chartUpper ≤ domLower − margin − hysteresis`. While syncing it always follows, also after a pause by hand.
+6. **Catch-up**: when Deepchart is more than `--catch-up` seconds behind, it is paused and Forwarded to the minute
+   Deepdom displays (safe: Deepdom is at or past that minute) and anchored there.
+7. **Master Play**: Deepdom plays, the sync is on, the rule starts Deepchart. **Master Pause**: Deepchart, then
+   Deepdom, then the sync is off.
+8. **Clean start**: pause both, Deepdom Reset → date → Set, Deepchart Forward (or Reset → Set if the date is not
+   ahead), wait until both have Play enabled (detecting a Deepdom crash), wait `--forward-wait`, then Play Deepdom
+   first and Deepchart second, and anchor both clocks at the start minute.
+
+## How it was verified
+
+- The real controller, clocks and trust rules against simulated apps (bursty rates, zooms, drags, scrolling,
+  minimizing, typed dates, Sets, hand presses), 1800 hours: never ahead at the default margin. With a margin below
+  0.5 an adversarial zoom case got ahead, so the app does not accept less.
+- Not tried on the real apps: clean start, catch-up, zooming or scrolling while playing, 5 minute bars, other themes
+  and display scalings (only dark theme at 125 %). The CPU and display fixes made after the last live run were only
+  checked against the paused apps.
 
 ## Open issues and ideas
 
-- **Untested**: the clean start since `EnsurePlaying` was added; Deepchart's Reset → Set path; speeds above x1 (at
-  high speed one poll is many replay seconds, and minutes can be skipped, which unanchors the clock).
-- **Speeds are not synced**, only a warning is printed when they differ. Could be set through `nudSpeed/PART_Txt` or
+- **Speeds above x1**: untested. Margin, hysteresis, the render delays and the capture interval are wall or replay
+  seconds which must scale with the speed first.
+- **Speeds are not synced**, only a warning is shown when they differ. Could be set through `nudSpeed/PART_Txt` or
   the preset buttons (untested).
-- **`--dom-safety` trade-off**: closer following (higher value) vs the risk that a short Deepdom stall (below the
-  freeze timeout) lets Deepchart get briefly ahead.
+- **First minute after starting the tool** has ~2 s more lag: the axis offset is not calibrated yet.
+- **Bars under one minute** in Deepchart make the countdown useless (safe, but ~30 s of lag).
 - **Deepdom crash mid-session**: after a restart Deepdom is at an earlier time; Deepchart is held until Deepdom passes
   it, which can be long. Deepchart can only go back with Reset → Set.
 - **Catch-up precision**: Forward goes to Deepdom's displayed minute, up to 60 s behind its real position.
 - **Forward completion** is not detectable; a fixed wait is used.
 - **Date format** is parsed with the current culture, then a few fixed formats. Typing a date for `--start` must
   match what the box shows.
-- **Catch-up overrides a pause by hand**: a Deepchart paused by hand which is more than `--catch-up` behind is
-  Forwarded and then follows, although rule 4 says it stays paused.
 - **Console keys against the rules**: `Q`, `A` (off) and Ctrl+C resume a held Deepchart, which may then get ahead.
-  `P` and `Space` play and pause Deepdom. `P` after `Space` does not bring Deepchart back when the correction is on.
-  The desktop app does none of this.
 - **Text typed into Deepchart's box** is still believed: an earlier date lowers its upper bound.
 - **Text typed into Deepdom's box before the tool started** is believed unless Deepdom is reset or loading.
+- **Deepchart can get ahead while it does not answer**: nothing can pause it then. It is held afterwards.
 - **Killing the tool** while Deepchart plays leaves it playing unguarded: there is no watchdog.
-- **Speeds above x1**: margin and hysteresis are replay seconds, but the poll is wall time. At x10 one 200 ms poll is
-  2 replay seconds, four times the default margin. They must scale with the speed before the speed is raised.
-
-## Found with stand-in windows (2026-11-22)
-
-Two WPF stand-ins with the same AutomationIds, which log their true position, run against the original console:
-
-| Case | Original | Now |
-|---|---|---|
-| A later date typed into Deepdom's box, no Set | Deepchart Forwarded **1770 s ahead** | held until Deepdom's next rollover |
-| Deepchart does not answer for 8 s while playing | the time was lost: **4.7 s ahead**, still ahead at the end, shown as 4.6 s behind | up to 2.3 s ahead during the hang (it can not be paused then), then held until behind |
-| Deepchart's date unreadable | no correction at all (from reading the code) | held |
-
-The two fixes in the algorithm:
-
-- A change of Deepdom's displayed time is not trusted until a rollover is seen while playing. The cost: after a Set by
-  hand in Deepdom, Deepchart waits up to one or two replay minutes before it follows. A clean start has no wait.
-- After failed reads Deepchart is credited as playing for the whole time since its last good reading.
+- **Startup** costs a busy CPU core for ~20 s (JIT). ReadyToRun would shorten it.

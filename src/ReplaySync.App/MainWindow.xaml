@@ -15,16 +15,8 @@
             </StackPanel>
         </Border>
 
-        <Grid Margin="0,8,0,0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="8" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
-            <Button x:Name="SyncButton" Content="Start sync" Height="38" FontWeight="SemiBold" IsEnabled="False" Click="OnSyncClick" />
-            <Button x:Name="FollowButton" Grid.Column="2" Content="Let Deepchart follow" IsEnabled="False" Click="OnFollowClick"
-                    ToolTip="For a Deepchart which was paused by hand: the sync resumes it once it is safely behind." />
-        </Grid>
+        <Button x:Name="PlayPauseButton" Margin="0,8,0,0" Content="Play" Height="48" FontSize="18" FontWeight="SemiBold"
+                IsEnabled="False" Click="OnPlayPauseClick" />
 
         <Border Style="{StaticResource Card}">
             <StackPanel>
@@ -72,7 +64,7 @@
             <StackPanel>
                 <StackPanel x:Name="StartEdit">
                     <TextBlock Style="{StaticResource Caption}"
-                               Text="Moves both replays to the same minute, plays them and turns the sync on. Write the date the way Deepdom shows it." />
+                               Text="Moves both replays to the same minute and plays them in sync. Write the date the way Deepdom shows it." />
                     <Grid Margin="0,8,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
@@ -115,7 +107,6 @@
                         <RowDefinition Height="34" />
                         <RowDefinition Height="34" />
                         <RowDefinition Height="34" />
-                        <RowDefinition Height="34" />
                     </Grid.RowDefinitions>
                     <TextBlock Text="Pause closer than (s)" VerticalAlignment="Center"
                                ToolTip="Deepchart is paused when it is less than this many replay seconds behind." />
@@ -123,12 +114,9 @@
                     <TextBlock Grid.Row="1" Text="Resume after a further (s)" VerticalAlignment="Center"
                                ToolTip="Higher means fewer but longer pauses." />
                     <TextBox x:Name="HysteresisBox" Grid.Row="1" Grid.Column="1" Margin="0,3" />
-                    <TextBlock Grid.Row="2" Text="Deepdom safety (0.1 to 1)" VerticalAlignment="Center"
-                               ToolTip="Higher follows closer but is less safe when Deepdom stalls." />
-                    <TextBox x:Name="SafetyBox" Grid.Row="2" Grid.Column="1" Margin="0,3" />
-                    <TextBlock Grid.Row="3" Text="Forward when behind by (s)" VerticalAlignment="Center"
+                    <TextBlock Grid.Row="2" Text="Forward when behind by (s)" VerticalAlignment="Center"
                                ToolTip="Deepchart then jumps to the minute Deepdom shows." />
-                    <TextBox x:Name="CatchUpBox" Grid.Row="3" Grid.Column="1" Margin="0,3" />
+                    <TextBox x:Name="CatchUpBox" Grid.Row="2" Grid.Column="1" Margin="0,3" />
                 </Grid>
                 <TextBlock x:Name="SettingsMessage" Style="{StaticResource Caption}" Margin="0,4" />
                 <DockPanel LastChildFill="False">
