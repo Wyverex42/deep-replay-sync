@@ -5,8 +5,8 @@ using FlaUI.UIA3;
 /// The sync itself: the correction rule and the clean start, shared by the console and the desktop app.
 ///
 /// Deepdom is where the trades happen, so syncing never touches its replay: only Deepchart is paused and
-/// resumed (Deepdom only by the master Play / Pause and a clean start). The rule is one-sided: Deepchart must
-/// never show what Deepdom has not played yet. Deepchart's time is
+/// resumed (Deepdom only by the master Play / Pause, a clean start and closing the app). The rule is one-sided:
+/// Deepchart must never show what Deepdom has not played yet. Deepchart's time is
 /// taken as an upper bound and Deepdom's as a lower bound, so every uncertainty holds Deepchart back rather than
 /// letting it run ahead.
 ///
@@ -26,8 +26,10 @@ sealed class SyncController : IDisposable
 
     bool _chartHeld;          // Deepchart paused by this tool
     bool _chartMissedRead;    // Deepchart could not be read since the last good reading: it may have been playing
-    bool _chartTimeDoubtful;  // a clean start failed: Deepchart's box may show typed text
+    bool _chartTimeDoubtful;  // a clean start typed into Deepchart's box and it was not seen loaded there since
+    bool _chartReset;         // Deepchart waits for Set: it can not play
     bool _domUnconfirmed;     // Deepdom's box shows a time which may be typed text rather than a replay position
+    DateTime? _domStartsAt;   // Deepdom is loaded at exactly this minute and was not seen playing since
     int _domNotLoaded;        // polls in a row in which Deepdom was neither playing nor able to play
     int _pauses;
     double _heldSeconds;
@@ -48,6 +50,7 @@ sealed class SyncController : IDisposable
         public double ScreenFrom;   // older images show the time before a jump
         public double? FrameHandled;
         public bool ToTheSecond;    // the time is being read from the screen
+        public (DateTime Minute, double At)? MovedTo; // Set or Forward by a clean start, not seen loaded there yet
     }
 
     public SyncController(SyncOptions options, Action<string> log)
@@ -63,16 +66,25 @@ sealed class SyncController : IDisposable
         // UI Automation focuses the target of every press by default, which takes the focus from whatever the user
         // is typing in. Presses work without it.
         _automation.NativeAutomation2.AutoSetFocus = 0;
-        _chart = new(new ReplayApp("Deepchart", ChartProcess, _automation),
+        _chart = new(new ReplayApp(ChartLabel, ChartProcess, _automation),
             new ReplayClock(upperBound: true, initialRate: 1.0));
-        _dom = new(new ReplayApp("Deepdom", DomProcess, _automation),
+        _dom = new(new ReplayApp(DomLabel, DomProcess, _automation),
             new ReplayClock(upperBound: false, initialRate: AssumedDomRate));
         _screen = new ScreenClocks(ChartProcess, DomProcess, log);
     }
 
     const string ChartProcess = "Deepchart", DomProcess = "Deepdom";
+    const string ChartLabel = "Deepchart", DomLabel = "Deepdom";
+    public static string[] AppLabels => [ChartLabel, DomLabel];
     // Only for the best guess until it is measured, never for the bound
     const double AssumedDomRate = 0.6;
+    // Seconds a clean start step may take, not counting the time in which the app does not answer
+    const double StepTimeout = 60;
+    // Loading disables all buttons at once, so a Set which is still enabled after this was not taken
+    const double SetAgainAfter = 3;
+    const double CatchUpPressSeconds = 5;
+    // Play and Pause are both disabled for a moment when pressed, which reads as paused
+    const double PausedFor = 1;
 
     public bool SyncOn { get; private set; }
 
@@ -112,6 +124,8 @@ sealed class SyncController : IDisposable
             if (t.App.IsConnected || !t.App.TryConnect()) continue;
             _log($"{t.Label}: connected to the Replay Manage window");
             t.LastOk = false;
+            t.MovedTo = null;
+            if (t == _dom) _domStartsAt = null;
         }
     }
 
@@ -151,6 +165,21 @@ sealed class SyncController : IDisposable
             _log($"{t.Label}: responding again after {now - since:0.0}s");
             t.UnresponsiveSince = null;
         }
+
+        // Before the clocks see the new minute: where a clean start moved it needs no confirmation
+        if (t.MovedTo is { } moved)
+        {
+            if (reading.Minute != moved.Minute || (isChart && reading.Playing))
+            {
+                t.MovedTo = null;
+            }
+            else if (reading.Playing || t.App.CanPlay)
+            {
+                LoadedAt(t, moved.Minute, moved.At);
+                dt = 0;
+            }
+        }
+        if (isChart) _chartReset = !reading.Playing && t.App.CanSet;
 
         bool wasPlaying = t.Last is { Playing: true };
         // Time while Deepdom did not answer is not credited: it may have stalled. Deepchart is always credited, and
@@ -199,7 +228,11 @@ sealed class SyncController : IDisposable
         }
 
         // After the minute clock, which says which minute the seconds belong to
-        if (!isChart) WatchForReset(reading);
+        if (!isChart)
+        {
+            WatchForReset(reading);
+            WatchForStart(reading);
+        }
         if (!isChart && !reading.Playing) _domScreen.Stopped();
         if (isChart) ReadChartScreen(reading);
         else ReadDomScreen(reading);
@@ -214,7 +247,50 @@ sealed class SyncController : IDisposable
         _dom.Clock.Restart();
         _domScreen.Reset();
         _domUnconfirmed = true;
+        _domStartsAt = null;
         _log("Deepdom was reset (Deepchart waits for its next rollover)");
+    }
+
+    /// <summary>
+    /// The app is loaded where a clean start moved it, so it is at exactly that minute. Unlike typed text this needs
+    /// no rollover to confirm it: only a Set which was taken gets a reset replay loaded again.
+    /// </summary>
+    void LoadedAt(Tracked t, DateTime minute, double movedAt)
+    {
+        t.MovedTo = null;
+        t.Clock.AnchorAt(minute);
+        t.ToTheSecond = false;
+        if (t == _chart)
+        {
+            _chartScreen.Reset();
+            // A paused chart is not redrawn, so also the image from the move counts. It can only raise the bound.
+            t.ScreenFrom = movedAt;
+            _chartTimeDoubtful = _chartMissedRead = _chartReset = false;
+        }
+        else
+        {
+            _domScreen.Reset();
+            t.ScreenFrom = Now + 1; // older images can show the time before the Reset
+            _domUnconfirmed = false;
+            _domNotLoaded = 0;
+            _domStartsAt = minute;
+        }
+        _log($"{t.Label} is loaded at {minute:HH:mm:ss} (exact)");
+    }
+
+    // Played from exactly a minute: as good as a rollover to calibrate the axis, so there is no waiting for one
+    void WatchForStart(ReplayReading reading)
+    {
+        if (_domStartsAt is not { } start) return;
+        if (reading.Minute != start || _domUnconfirmed)
+        {
+            _domStartsAt = null;
+        }
+        else if (reading.Playing)
+        {
+            _domScreen.Rollover(start, Now);
+            _domStartsAt = null;
+        }
     }
 
     void ReadDomScreen(ReplayReading reading)
@@ -278,6 +354,8 @@ sealed class SyncController : IDisposable
     void Correct()
     {
         if (!_chart.App.IsConnected || _chart.Last is not { } chart) return;
+        // Reset or still loading: Play and Forward are disabled, and a typed date would look like its time
+        if (!chart.Playing && (_chartReset || _chart.MovedTo is not null)) return;
 
         double? bound = AheadBound;
         bool mustHold = bound is null || bound > -_options.Margin;
@@ -287,7 +365,8 @@ sealed class SyncController : IDisposable
         // is at or past its displayed minute. Forward only goes ahead, so this never moves Deepchart back.
         if (bound is { } far && far < -_options.CatchUp && _chart.App.CanForward
             && _dom.Last is { } dom && dom.Minute == _dom.Clock.DisplayedMinute
-            && _dom.Clock.DisplayedMinute > _chart.Clock.DisplayedMinute)
+            && _dom.Clock.DisplayedMinute > _chart.Clock.DisplayedMinute
+            && (chart.Playing || _chart.App.CanPlay))
         {
             CatchUp(dom, -far);
             return;
@@ -321,7 +400,12 @@ sealed class SyncController : IDisposable
         if (_chart.App.EnsurePlaying(false, 10))
         {
             _chartHeld = true;
-            if (_chart.App.ForwardTo(dom.Text) is { } error)
+            // The date is typed first, so giving up after one timed out press would leave a time it is not at
+            double pressing = Now;
+            string? error;
+            while ((error = _chart.App.ForwardTo(dom.Text)) is not null && Now - pressing < CatchUpPressSeconds)
+                Thread.Sleep(300);
+            if (error is not null)
             {
                 _log($"Forward failed: {error}");
             }
@@ -346,29 +430,55 @@ sealed class SyncController : IDisposable
     }
 
     /// <summary>
-    /// Turns the sync off and leaves Deepchart paused, as nothing holds it back from then on. False when Deepchart
-    /// could not be paused.
+    /// Closing the app: pauses both and turns the sync off. Waits for an app which does not answer, while it keeps
+    /// the other one paused. Returns the apps which may still be playing.
     /// </summary>
-    public bool DisableSync()
+    public string[] PauseForExit(double seconds)
     {
-        if (!SyncOn) return true;
         SyncOn = false;
-        if (!_chart.App.IsConnected)
-        {
-            _log("Sync off. Deepchart's replay window is not connected, so it could not be paused");
-            return false;
-        }
+        Report("Closing: pausing both");
+        Tracked[] both = [_chart, _dom];
+        var pausedSince = new double?[both.Length];
+        double start = Now;
+        bool toldWaiting = false;
 
-        bool wasPlaying = _chart.Last is { Playing: true };
-        if (!_chart.App.EnsurePlaying(false, 3))
+        while (true)
         {
-            _log("Sync off, but Deepchart could NOT be paused: pause it by hand");
-            return false;
+            for (int i = 0; i < both.Length; i++)
+            {
+                if (PauseIfPlaying(both[i].App)) pausedSince[i] ??= Now;
+                else pausedSince[i] = null;
+            }
+            if (pausedSince.All(since => Now - since >= PausedFor))
+            {
+                _log("Closing: both are paused");
+                return [];
+            }
+
+            var pending = both.Where((_, i) => pausedSince[i] is null).Select(t => t.Label).ToArray();
+            if (pending.Length > 0)
+            {
+                string names = string.Join(" and ", pending);
+                if (Now - start > seconds)
+                {
+                    _log($"Closing: could NOT pause {names}");
+                    return pending;
+                }
+                if (!toldWaiting && Now - start > 2)
+                {
+                    toldWaiting = true;
+                    Report($"Closing: waiting for {names} to pause");
+                }
+            }
+            Thread.Sleep(250);
         }
-        if (wasPlaying) _chartHeld = true;
-        if (_chart.Last is { } last) _chart.Last = last with { Playing = false };
-        _log("Sync off. Deepchart is left paused");
-        return true;
+    }
+
+    /// <summary>True when it is seen paused or there is no replay. Presses Pause otherwise.</summary>
+    static bool PauseIfPlaying(ReplayApp app)
+    {
+        if (!app.IsConnected && !app.TryConnect()) return !app.WindowSeen || !app.IsRunning;
+        return app.TryRead(out var reading) && Paused(app, reading);
     }
 
     /// <summary>
@@ -442,10 +552,11 @@ sealed class SyncController : IDisposable
     }
 
     /// <summary>
-    /// Moves both replays to the same minute and presses Play in both. The only thing here which resets Deepdom.
-    /// On failure or cancellation Deepchart is paused.
+    /// Moves both replays to the same minute and plays Deepdom. The only thing here which resets Deepdom.
+    /// Deepchart is left to the rule, which starts it once Deepdom is seen past the minute: playChart is only for
+    /// running without the sync. On failure or cancellation Deepchart is paused.
     /// </summary>
-    public bool CleanStart(string text, CancellationToken cancel = default)
+    public bool CleanStart(string text, CancellationToken cancel = default, bool playChart = false)
     {
         if (ReplayApp.ParseMinute(text) is not { } target)
         {
@@ -455,10 +566,12 @@ sealed class SyncController : IDisposable
 
         _chartHeld = false;
         _dom.LastOk = false;
+        _dom.MovedTo = _chart.MovedTo = null;
+        _domStartsAt = null;
         bool done = false;
         try
         {
-            done = RunCleanStart(text, target, cancel);
+            done = RunCleanStart(text, target, playChart, cancel);
         }
         catch (OperationCanceledException)
         {
@@ -471,8 +584,6 @@ sealed class SyncController : IDisposable
 
         if (!done)
         {
-            // Either box may now show the typed date instead of a replay position
-            _domUnconfirmed = _chartTimeDoubtful = true;
             if (!_chart.App.IsConnected || !_chart.App.EnsurePlaying(false, 5))
                 _log("Clean start: Deepchart could NOT be paused: pause it by hand");
         }
@@ -480,7 +591,7 @@ sealed class SyncController : IDisposable
         return done;
     }
 
-    bool RunCleanStart(string text, DateTime target, CancellationToken cancel)
+    bool RunCleanStart(string text, DateTime target, bool playChart, CancellationToken cancel)
     {
         ReplayApp chart = _chart.App, dom = _dom.App;
 
@@ -496,113 +607,206 @@ sealed class SyncController : IDisposable
             Wait(0.5, cancel);
         }
 
-        cancel.ThrowIfCancellationRequested();
-        Report("Clean start: pausing both");
-        if (!chart.EnsurePlaying(false, 10))
-        {
-            _log("Clean start: Deepchart does not pause, so Deepdom was not touched");
-            return false;
-        }
-        if (dom.TryRead(out var domNow) && domNow.Playing) dom.Pause();
-        Wait(0.3, cancel);
+        // The apps freeze for seconds at any of these steps, so each one waits and looks before it tries again
+        if (!Until(chart, "Clean start: pausing Deepchart", StepTimeout, cancel, r => Paused(chart, r))) return false;
+        if (!Until(dom, "Clean start: pausing Deepdom", StepTimeout, cancel, r => Paused(dom, r))) return false;
 
         // Deepdom first: Reset + Set is the slow and fragile part
-        Report($"Clean start: Deepdom Reset + Set to {text}");
-        if (dom.ResetAndSet(text) is { } domError)
+        _domUnconfirmed = true; // from here on its box can show typed text, until it is loaded
+        if (!ResetAndSet(_dom, text, target, cancel)) return false;
+
+        // Deepchart: Forward when the target is ahead (fast, keeps the loaded data), otherwise Reset + Set. A reset
+        // or loading Deepchart has no Forward.
+        DateTime? chartMinute = null;
+        bool chartLoaded = false;
+        if (!Until(chart, "Clean start: reading Deepchart's time", _options.LoadTimeout, cancel, r =>
+            {
+                chartMinute = r.Minute;
+                chartLoaded = chart.CanPlay;
+                return chartLoaded || chart.CanSet;
+            }))
         {
-            _log($"Clean start: Deepdom: {domError}");
             return false;
         }
-        cancel.ThrowIfCancellationRequested();
 
-        // Deepchart: Forward when the target is ahead (fast, keeps the loaded data), otherwise Reset + Set
-        bool forwarded = false;
-        if (!_chartTimeDoubtful && chart.CanForward
-            && chart.TryRead(out var chartNow) && chartNow.Minute is { } chartMinute && target > chartMinute)
+        double? forwardedAt = null;
+        if (chartLoaded && !_chartTimeDoubtful && chart.CanForward && target > chartMinute)
         {
-            Report($"Clean start: Deepchart Forward from {chartMinute:HH:mm} to {target:HH:mm}");
-            if (chart.ForwardTo(text) is { } forwardError)
-            {
-                _log($"Clean start: Deepchart: {forwardError}");
+            _chartTimeDoubtful = true;
+            if (!TypeDate(chart, text, target, cancel)) return false;
+            double pressedFrom = Now;
+            // Pressing it again is harmless: Forward only ever goes ahead
+            if (!Until(chart, $"Clean start: Deepchart Forward to {text}", StepTimeout, cancel, _ => chart.Forward()))
                 return false;
-            }
-            forwarded = true;
+            _chart.MovedTo = (target, pressedFrom);
+            forwardedAt = Now;
         }
         else
         {
-            Report($"Clean start: Deepchart Reset + Set to {text}");
-            if (chart.ResetAndSet(text) is { } chartError)
-            {
-                _log($"Clean start: Deepchart: {chartError}");
-                return false;
-            }
+            _chartTimeDoubtful = true;
+            if (!ResetAndSet(_chart, text, target, cancel)) return false;
         }
 
         // Wait until both are loaded (Play enabled). Deepdom sometimes crashes here: notice it instead of hanging.
-        Report("Clean start: loading, this can take minutes");
-        timer.Restart();
-        while (!(dom.CanPlay && chart.CanPlay))
+        double loadingSince = Now;
+        foreach (var t in new[] { _dom, _chart })
         {
-            foreach (var app in new[] { chart, dom })
-            {
-                if (app.IsAlive) continue;
-                _log($"Clean start: {app.Label} exited (crashed?) while loading. Restart it and run again.");
-                return false;
-            }
-            if (timer.Elapsed.TotalSeconds > _options.LoadTimeout)
-            {
-                _log($"Clean start: timed out after {_options.LoadTimeout:0}s (Deepchart {Loading(chart)}, Deepdom {Loading(dom)})");
-                return false;
-            }
-            Wait(0.2, cancel);
+            if (!WaitLoaded(t, target, cancel)) return false;
         }
-        _log($"Clean start: both loaded after {timer.Elapsed.TotalSeconds:0.0}s");
+        _log($"Clean start: both loaded after {Now - loadingSince:0.0}s");
 
         // Forward has no feedback: give it the configured time, counted from the Forward press
-        if (forwarded && timer.Elapsed.TotalSeconds < _options.ForwardWait)
-            Wait(_options.ForwardWait - timer.Elapsed.TotalSeconds, cancel);
+        if (forwardedAt + _options.ForwardWait - Now is { } left and > 0) Wait(left, cancel);
 
-        // Both at the same whole minute: Play in Deepdom first, so Deepchart can only start after it
-        cancel.ThrowIfCancellationRequested();
-        Report("Clean start: pressing Play");
-        if (!dom.EnsurePlaying(true, 30))
+        // Both are at exactly the minute, whatever fails from here on
+        foreach (var t in new[] { _dom, _chart })
         {
-            _log("Clean start: Deepdom did not start playing");
-            return false;
-        }
-        cancel.ThrowIfCancellationRequested();
-        double chartStarted = Now;
-        if (!chart.EnsurePlaying(true, 30))
-        {
-            _log("Clean start: Deepchart did not start playing");
-            return false;
+            LoadedAt(t, target, t.MovedTo?.At ?? Now);
+            t.Last = new ReplayReading(target, text, Playing: false, t.Last?.Speed ?? 1);
+            t.LastAttempt = Now;
+            t.LastOk = true;
+            t.UnresponsiveSince = null;
         }
 
-        // Both clocks are exactly at the start minute: anchor them, no waiting for a first rollover. Deepchart is
-        // credited from the moment before its Play. Deepdom too: it was seen playing before that.
-        StartedAt(_chart, target, text, chartStarted);
-        StartedAt(_dom, target, text, chartStarted);
-        _domUnconfirmed = _chartTimeDoubtful = _chartMissedRead = false;
-        _domScreen.Reset();
-        _chartScreen.Reset();
-        // Images from before the Play can still show the time before the Reset
-        _chart.ScreenFrom = _dom.ScreenFrom = Now + 1;
-        _chart.ToTheSecond = _dom.ToTheSecond = false;
-        _log("Clean start: both playing");
+        if (!Until(dom, "Clean start: starting Deepdom", StepTimeout, cancel, r => Started(dom, r))) return false;
+        // The time spent pressing is not credited to Deepdom, but it is to Deepchart
+        double started = Now;
+        _dom.LastAttempt = started;
+        WatchForStart(new ReplayReading(target, text, Playing: true, _dom.Last?.Speed ?? 1));
+
+        if (playChart)
+        {
+            if (!Until(chart, "Clean start: starting Deepchart", StepTimeout, cancel, r => Started(chart, r))) return false;
+            _chart.LastAttempt = started;
+            _log("Clean start: both playing");
+        }
+        else
+        {
+            // Pressed right away it was ahead whenever Deepdom froze at its start
+            _chartHeld = true;
+            _log("Clean start: Deepdom plays, Deepchart follows");
+        }
         return true;
     }
 
-    static void StartedAt(Tracked t, DateTime target, string text, double since)
+    static bool Paused(ReplayApp app, ReplayReading reading)
     {
-        int speed = t.App.TryRead(out var r) ? r.Speed : t.Last?.Speed ?? 1;
-        t.Clock.AnchorAt(target);
-        t.Last = new ReplayReading(target, text, Playing: true, speed);
-        t.LastAttempt = since;
-        t.LastOk = true;
-        t.UnresponsiveSince = null;
+        if (!reading.Playing) return true;
+        app.Pause();
+        return false;
     }
 
-    static string Loading(ReplayApp app) => app.CanPlay ? "ready" : "loading";
+    static bool Started(ReplayApp app, ReplayReading reading)
+    {
+        if (reading.Playing) return true;
+        app.Play();
+        return false;
+    }
+
+    bool ResetAndSet(Tracked t, string text, DateTime target, CancellationToken cancel)
+    {
+        var app = t.App;
+        bool resetPressed = false;
+        // Not a quick step: Deepchart's Reset took more than a minute
+        if (!Until(app, $"Clean start: {app.Label} Reset", _options.LoadTimeout, cancel, _ =>
+            {
+                if (app.CanSet) return true;
+                if (!resetPressed) resetPressed = app.Reset();
+                return false;
+            }))
+        {
+            return false;
+        }
+        if (!TypeDate(app, text, target, cancel)) return false;
+
+        // Already now: the press can be carried out after a timeout or a cancel. It only counts once seen loaded,
+        // which a reset replay can not be without a Set.
+        t.MovedTo = (target, Now);
+        double? pressedAt = null;
+        bool setTried = false;
+        // The press returns before the click is handled, so only the disabled button shows that it was taken
+        return Until(app, $"Clean start: {app.Label} Set to {text}", _options.LoadTimeout, cancel, _ =>
+        {
+            if (setTried && app.SetIsDisabled) return true;
+            if (pressedAt is { } at && Now - at < SetAgainAfter) return false;
+            setTried = true;
+            if (app.Set()) pressedAt = Now;
+            return false;
+        });
+    }
+
+    bool WaitLoaded(Tracked t, DateTime target, CancellationToken cancel)
+    {
+        var app = t.App;
+        double pressedAt = Now;
+        return Until(app, $"Clean start: waiting for {app.Label} to load, this can take minutes",
+            _options.LoadTimeout, cancel, reading =>
+            {
+                if (app.CanPlay) return true;
+                // Back in the reset state: the load did not work
+                if (reading.Minute == target && Now - pressedAt >= SetAgainAfter && app.CanSet)
+                {
+                    _log($"Clean start: {app.Label} is not loading, pressing Set again");
+                    app.Set();
+                    pressedAt = Now;
+                }
+                return false;
+            });
+    }
+
+    bool TypeDate(ReplayApp app, string text, DateTime target, CancellationToken cancel)
+    {
+        bool typed = false;
+        return Until(app, $"Clean start: typing the date into {app.Label}", StepTimeout, cancel, reading =>
+        {
+            if (typed && reading.Minute == target) return true;
+            typed = true;
+            app.TypeDate(text);
+            return false;
+        });
+    }
+
+    /// <summary>
+    /// Repeats the attempt until it returns true. It is only made when the app answers, and time in which the app
+    /// does not answer is not counted against the timeout: only cancelling or the end of a process ends that wait.
+    /// </summary>
+    bool Until(ReplayApp app, string step, double timeout, CancellationToken cancel, Func<ReplayReading, bool> attempt)
+    {
+        Report(step);
+        var tracked = app == _chart.App ? _chart : _dom;
+        bool frozen = false;
+        double counted = 0, previous = Now;
+        while (true)
+        {
+            cancel.ThrowIfCancellationRequested();
+            foreach (var either in new[] { _chart.App, _dom.App })
+            {
+                if (either.IsAlive) continue;
+                _log($"Clean start: {either.Label} exited (crashed?). Restart it and run again.");
+                return false;
+            }
+
+            var status = app.Read(out var reading);
+            // Not polled meanwhile, and after a cancel it may not answer. Not the minute: that can be typed text.
+            if (status == ReadStatus.Ok && tracked.Last is { } last) tracked.Last = last with { Playing = reading.Playing };
+            if (status == ReadStatus.Ok && attempt(reading)) return true;
+            if (status == ReadStatus.Gone) app.TryConnect();
+
+            if (frozen != (status == ReadStatus.Unresponsive))
+            {
+                frozen = !frozen;
+                Report(frozen ? $"{step} ({app.Label} is not responding, waiting)" : step);
+            }
+            if (!frozen) counted += Now - previous;
+            previous = Now;
+            if (counted > timeout)
+            {
+                _log($"{step}: gave up after {timeout:0}s");
+                return false;
+            }
+            Wait(0.3, cancel);
+        }
+    }
 
     void Report(string activity)
     {
@@ -622,6 +826,7 @@ sealed class SyncController : IDisposable
         SyncOn,
         _chartHeld,
         _domUnconfirmed,
+        _chartReset,
         _dom.ToTheSecond && !_domScreen.Calibrated,
         !_domUnconfirmed && _chart.Clock.Anchored && _dom.Clock.Anchored
             ? (_chart.Clock.Estimate - _dom.Clock.Estimate).TotalSeconds

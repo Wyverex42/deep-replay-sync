@@ -16,8 +16,11 @@ Needs Windows 11 (borderless window capture).
 - **Play** plays Deepdom and syncs: Deepchart starts by itself as soon as it is safely behind, and is paused and
   resumed from then on. While syncing a Deepchart paused by hand follows again.
 - **Pause** pauses both and ends the sync. To run just one app, pause here and use that app's own replay window.
-- **Closing the window** while syncing pauses Deepchart and leaves Deepdom as it is.
-- **Clean start** resets both replays to a minute and plays them in sync, after a confirmation.
+- **Closing the window** pauses both, also without the sync. It waits up to 30 s for an app which does not answer,
+  then names what it could not pause.
+- **Clean start** resets both replays to a minute and plays them in sync, after a confirmation. Deepdom starts,
+  Deepchart follows a few seconds later, once Deepdom is seen past that minute. While an app does
+  not respond it keeps waiting and says so, until it answers, exits or you press Cancel.
 - **Settings** are margin, hysteresis and catch-up. Saved in `%LOCALAPPDATA%\DeepReplaySync\settings.json`.
 
 ## For a small gap
@@ -36,7 +39,7 @@ but up to a minute or so behind. Each app's line says "reading seconds" or "minu
 |---|---|
 | Grey | Paused |
 | Green | Playing in sync, including the short pauses |
-| Amber | Deepchart is held, the text says why. Or Deepdom plays without the sync |
+| Amber | Deepchart is held or reset, the text says why. Or Deepdom plays without the sync |
 | Red | Not guarded or ahead: Deepchart plays by itself, not responding, not found, not updating |
 
 The large number is the best guess of the gap. "Worst case" below it is what the sync decides on.
@@ -50,5 +53,6 @@ The large number is the best guess of the gap. "Worst case" below it is what the
 | `MainWindow.xaml(.cs)` | The window. Never calls UI Automation itself. |
 | `Settings.cs` | The saved settings and their valid ranges. |
 | `Theme.xaml` | Colours and control styles. |
+| `app.ico` | The icon of the exe, the window and the taskbar. |
 
 Only one instance of the app can run. It does not detect the console: don't sync with both at once.

@@ -7,6 +7,8 @@
     <SupportedOSPlatformVersion>10.0.22000.0</SupportedOSPlatformVersion>
     <UseWPF>true</UseWPF>
     <AssemblyName>DeepReplaySync</AssemblyName>
+    <!-- Also the window's and the taskbar's icon -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
     <RootNamespace>DeepReplaySync</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>

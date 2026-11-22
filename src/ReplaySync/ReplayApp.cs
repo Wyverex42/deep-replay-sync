@@ -17,6 +17,18 @@ sealed class ReplayApp(string label, string processName, UIA3Automation automati
     public bool IsConnected => _clock is not null;
     /// <summary>Only Deepchart has a Forward button (jump ahead without a reset).</summary>
     public bool CanForward => _forward is not null;
+    /// <summary>The window was found once, so there is a replay which may be playing.</summary>
+    public bool WindowSeen { get; private set; }
+
+    public bool IsRunning
+    {
+        get
+        {
+            var processes = Process.GetProcessesByName(processName);
+            foreach (var process in processes) process.Dispose();
+            return processes.Length > 0;
+        }
+    }
 
     /// <summary>False when the process this window belonged to has exited (crashed or closed).</summary>
     public bool IsAlive
@@ -36,13 +48,19 @@ sealed class ReplayApp(string label, string processName, UIA3Automation automati
         if (pids.Count == 0) return false;
 
         var cf = automation.ConditionFactory;
-        foreach (var window in automation.GetDesktop().FindAllChildren())
+        AutomationElement[] windows;
+        // Times out as a whole while one of the apps hangs
+        try { windows = automation.GetDesktop().FindAllChildren(); }
+        catch { return false; }
+
+        foreach (var window in windows)
         {
             try
             {
                 int pid = window.Properties.ProcessId.ValueOrDefault;
                 if (!pids.Contains(pid)) continue;
                 if (window.Properties.Name.ValueOrDefault != "Replay Manage") continue;
+                WindowSeen = true;
 
                 _clock = window.FindFirstChild(cf.ByAutomationId("dtp_IniDt"))?.FindFirstChild(cf.ByAutomationId("PART_Txt"));
                 _speed = window.FindFirstChild(cf.ByAutomationId("nudSpeed"))?.FindFirstChild(cf.ByAutomationId("PART_Txt"));
@@ -52,7 +70,8 @@ sealed class ReplayApp(string label, string processName, UIA3Automation automati
                 _reset = window.FindFirstChild(cf.ByAutomationId("btnReset"));
                 _forward = window.FindFirstChild(cf.ByAutomationId("btnForward"));
                 _process = processes.First(p => p.Id == pid);
-                if (_clock is not null && _play is not null && _pause is not null) return true;
+                if (_clock is not null && _play is not null && _pause is not null && _set is not null && _reset is not null)
+                    return true;
             }
             catch
             {
@@ -72,38 +91,42 @@ sealed class ReplayApp(string label, string processName, UIA3Automation automati
     public string? ForwardTo(string text)
     {
         if (_forward is null) return "this app has no Forward button";
-        if (TypeDate(text) is { } error) return error;
-        return Invoke(_forward) ? null : "the Forward button is disabled";
+        if (!TypeDate(text)) return "could not type the date";
+        return Forward() ? null : "could not press Forward";
     }
 
-    /// <summary>
-    /// Reset, type the date, Set: the only way to go back in time, and Deepdom's only way to move at all. The app
-    /// then loads the data: wait for CanPlay. Returns what failed, or null.
-    /// </summary>
-    public string? ResetAndSet(string text)
+    // A press or a typed date which returns false may still be carried out: a busy app answers too late, but acts
+    // once it continues. So look at the state before trying again.
+    public bool Forward() => Invoke(_forward);
+    public bool Reset() => Invoke(_reset);
+    public bool Set() => Invoke(_set);
+
+    public bool TypeDate(string text)
     {
-        if (!IsEnabled(_set))
+        try
         {
-            if (!Invoke(_reset)) return "the Reset button is disabled";
-            if (!WaitFor(() => IsEnabled(_set), 10)) return "the Set button did not enable after Reset";
+            _clock!.Patterns.Value.Pattern.SetValue(text);
+            return true;
         }
-        if (TypeDate(text) is { } error) return error;
-        return Invoke(_set) ? null : "the Set button is disabled";
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>True when Play is enabled: the replay is loaded and paused.</summary>
     public bool CanPlay => IsEnabled(_play);
 
-    string? TypeDate(string text)
+    /// <summary>True when Set is enabled: the replay was reset.</summary>
+    public bool CanSet => IsEnabled(_set);
+
+    /// <summary>True when Set is known to be disabled. Not the opposite of CanSet: both are false without an answer.</summary>
+    public bool SetIsDisabled
     {
-        try
+        get
         {
-            _clock!.Patterns.Value.Pattern.SetValue(text);
-            return null;
-        }
-        catch (Exception e)
-        {
-            return $"could not type the date: {e.Message}";
+            try { return _set is not null && !_set.Properties.IsEnabled.Value; }
+            catch { return false; }
         }
     }
 
@@ -111,17 +134,6 @@ sealed class ReplayApp(string label, string processName, UIA3Automation automati
     {
         try { return e is not null && e.Properties.IsEnabled.Value; }
         catch { return false; }
-    }
-
-    static bool WaitFor(Func<bool> condition, double seconds)
-    {
-        var sw = Stopwatch.StartNew();
-        while (sw.Elapsed.TotalSeconds < seconds)
-        {
-            if (condition()) return true;
-            Thread.Sleep(100);
-        }
-        return false;
     }
 
     /// <summary>Reads the replay state. False when the window is gone or the app does not answer.</summary>

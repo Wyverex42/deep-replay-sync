@@ -12,11 +12,14 @@ sealed class SyncRunner
     /// <summary>What the UI sees. Timestamps are Stopwatch timestamps.</summary>
     public sealed record Status(SyncSnapshot Sync, long PublishedAt, long ActivitySince);
 
+    // Deepdom was seen frozen for 15 s
+    const double ExitPauseSeconds = 30;
+
     readonly SyncOptions _options;
     readonly ConcurrentQueue<Action<SyncController>> _commands = new();
     readonly ConcurrentQueue<string> _log = new();
     readonly AutoResetEvent _wake = new(false);
-    readonly TaskCompletionSource<bool> _finished = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    readonly TaskCompletionSource<string[]> _finished = new(TaskCreationOptions.RunContinuationsAsynchronously);
     readonly Thread _thread;
 
     SyncController? _controller;
@@ -76,9 +79,9 @@ sealed class SyncRunner
     public void CancelCleanStart() => _cleanStart?.Cancel();
 
     /// <summary>
-    /// Ends the sync and leaves Deepchart paused if it was syncing. The result is false when that pause failed.
+    /// Ends the sync and pauses both replays. The result is the apps which may still be playing.
     /// </summary>
-    public Task<bool> StopAsync()
+    public Task<string[]> StopAsync()
     {
         CancelCleanStart();
         _stopping = true;
@@ -94,7 +97,7 @@ sealed class SyncRunner
 
     void Run()
     {
-        bool leftSafe = false;
+        string[] notPaused = SyncController.AppLabels;
         try
         {
             using var controller = new SyncController(_options, Log);
@@ -112,7 +115,7 @@ sealed class SyncRunner
                 Publish();
                 _wake.WaitOne(_options.PollMs);
             }
-            leftSafe = controller.DisableSync();
+            notPaused = controller.PauseForExit(ExitPauseSeconds);
         }
         catch (Exception e)
         {
@@ -122,7 +125,7 @@ sealed class SyncRunner
         finally
         {
             _controller = null;
-            _finished.TrySetResult(leftSafe);
+            _finished.TrySetResult(notPaused);
         }
     }
 

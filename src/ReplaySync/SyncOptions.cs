@@ -12,8 +12,8 @@ sealed class SyncOptions
     public double CatchUp { get; set; } = 90;
     /// <summary>Forward gives no feedback: wall seconds to wait for it.</summary>
     public double ForwardWait { get; init; } = 5;
-    /// <summary>Wall seconds to wait for Reset + Set to load.</summary>
-    public double LoadTimeout { get; init; } = 180;
+    /// <summary>Wall seconds to wait for each Reset, Set and load, not counting the time an app does not answer.</summary>
+    public double LoadTimeout { get; init; } = 600;
     /// <summary>Log every pause and resume.</summary>
     public bool Verbose { get; init; }
 }

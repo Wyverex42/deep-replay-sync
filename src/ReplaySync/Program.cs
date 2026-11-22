@@ -18,10 +18,10 @@
 //   --verbose           log every pause and resume
 //   --start "<date>"    clean start at this date (same format as the date box, e.g. "06/01/2026 09:30"):
 //                       pauses both; Deepchart jumps with Forward when the date is ahead of it, otherwise
-//                       Reset + Set; Deepdom always Reset + Set. Waits until both are loaded, then presses Play
-//                       in both together.
+//                       Reset + Set; Deepdom always Reset + Set. Waits until both are loaded, then plays Deepdom.
+//                       Deepchart is started by the correction, or right away when that is off.
 //   --forward-wait <s>  Forward gives no feedback: wall seconds to wait for it (default 5)
-//   --load-timeout <s>  how long to wait for Reset + Set to load (default 180)
+//   --load-timeout <s>  how long to wait for each Reset, Set and load, not counting freezes (default 600)
 //
 // Keys:  A = toggle correction   P = play (sync on)   Space = pause both (sync off)   Q = quit
 //
@@ -71,7 +71,7 @@ if (interactive) Log("Keys: A = toggle correction, P = play (sync on), Space = p
 
 Console.CancelKeyPress += (_, _) => sync.ReleaseChart("quitting");
 
-if (startText is not null && !sync.CleanStart(startText)) return 2;
+if (startText is not null && !sync.CleanStart(startText, playChart: !auto)) return 2;
 
 var wall = Stopwatch.StartNew();
 double nextStatus = 0, heldBefore = 0;

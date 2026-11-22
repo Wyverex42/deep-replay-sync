@@ -21,6 +21,7 @@ sealed record SyncSnapshot(
     bool SyncOn,
     bool ChartHeld,
     bool DomUnconfirmed,
+    bool ChartReset,
     bool DomTimeIsRough,
     double? Ahead,
     double? AheadBound,

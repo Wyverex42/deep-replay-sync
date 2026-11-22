@@ -29,6 +29,13 @@ readonly record struct Banner(Level Level, string Title, string Detail)
         if (!chart.Responding)
             return new(s.SyncOn ? Level.Danger : Level.Idle, "Deepchart is not responding", "It can not be paused until it answers.");
 
+        // Before anything about times: those of a reset Deepchart mean nothing
+        if (s.ChartReset)
+        {
+            return new(Level.Holding, "Deepchart is reset",
+                "It can not play. Press Set in its Replay Manage window, or run a clean start.");
+        }
+
         // While Deepdom's time is only a rough lower bound, "ahead" would mostly be a false alarm
         if (s is { Ahead: > 0, AheadBound: > ClearlyAhead, DomTimeIsRough: false })
         {

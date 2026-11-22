@@ -18,6 +18,8 @@ public partial class MainWindow : Window
     const int MaxLogChars = 40_000;
     const string None = "—";
     static readonly TimeSpan StaleAfter = TimeSpan.FromSeconds(6);
+    // Longer than the runner's own limit, as a command may have to end first
+    static readonly TimeSpan CloseTimeout = TimeSpan.FromSeconds(60);
 
     readonly Settings _settings = Settings.Load();
     readonly SyncRunner _runner;
@@ -64,9 +66,14 @@ public partial class MainWindow : Window
         ShowBanner(stale
             ? new(Level.Danger, "Not updating", "A window is not answering. Pause Deepchart by hand if in doubt.")
             : Banner.For(s));
-        ShowGap(s, live: !stale && !working);
+        ShowGap(s, live: !stale && !working && !s.ChartReset);
         ShowApp(s.Dom, DomTime, DomState);
         ShowApp(s.Chart, ChartTime, ChartState);
+        if (s.ChartReset && !_runner.CleanStarting)
+        {
+            ChartTime.Text = None;
+            ChartState.Text = "Reset, waiting for Set";
+        }
         ShowStats(s);
 
         // Pause whenever something runs in sync or that can not be told, so pausing is always one click
@@ -133,6 +140,13 @@ public partial class MainWindow : Window
 
     void ShowApp(AppSnapshot app, System.Windows.Controls.TextBlock time, System.Windows.Controls.TextBlock state)
     {
+        if (_runner.CleanStarting)
+        {
+            // Not polled meanwhile: the last reading would still say playing
+            time.Text = None;
+            state.Text = "Waiting for the clean start";
+            return;
+        }
         time.Text = app.DisplayedMinute is not { } minute ? None
             : app.Anchored ? $"~{app.Estimate:HH:mm:ss}"
             : $"{minute:HH:mm}:??";
@@ -362,17 +376,19 @@ public partial class MainWindow : Window
     {
         base.OnClosing(e);
         if (_closed) return;
-        // The sync thread first pauses Deepchart. Waiting for it here would block the UI thread, so close afterwards.
+        // The sync thread first pauses both. Waiting for it here would block the UI thread, so close afterwards.
         e.Cancel = true;
         if (_closing) return;
         _closing = true;
-        ShowBanner(new(Level.Holding, "Closing", "Leaving Deepchart paused if it was syncing."));
+        ShowBanner(new(Level.Holding, "Closing", "Pausing both replays. This waits if one is not responding."));
         IsEnabled = false;
 
         var stopped = _runner.StopAsync();
-        bool safe = await Task.WhenAny(stopped, Task.Delay(TimeSpan.FromSeconds(30))) == stopped && await stopped;
-        if (!safe)
-            MessageBox.Show(this, "Deepchart could not be paused. Pause it by hand: nothing holds it back now.", Title);
+        string[] notPaused = await Task.WhenAny(stopped, Task.Delay(CloseTimeout)) == stopped
+            ? await stopped
+            : SyncController.AppLabels;
+        if (notPaused.Length > 0)
+            MessageBox.Show(this, $"Could not pause {string.Join(" and ", notPaused)}. Pause by hand: nothing syncs them now.", Title);
 
         _refresh.Stop();
         _closed = true;

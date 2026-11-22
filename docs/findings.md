@@ -9,7 +9,8 @@ What we learned about Deepchart and Deepdom while building the replay sync, as o
 - Both apps have their own, independent tick replay. They must play the same market time.
 - **Deepchart must never be ahead of Deepdom**: seeing even a few seconds of the future in Deepchart affects trading
   decisions. Being a little behind is acceptable.
-- **Deepdom's playback must not be disturbed** while trading: the sync only pauses and resumes Deepchart.
+- **Deepdom's playback must not be disturbed** while trading: the sync only pauses and resumes Deepchart. Closing
+  the desktop app pauses both.
 - Frequent short pauses of Deepchart are fine.
 - Both replays run at the same speed setting (x1 so far).
 
@@ -49,6 +50,10 @@ AutomationIds):
 | Loaded, paused | enabled | disabled | disabled | enabled |
 | Playing | disabled | enabled | disabled | enabled |
 | After Reset | disabled | disabled | enabled | disabled |
+| Loading after Set | disabled | disabled | disabled | disabled |
+
+Seen on Deepchart: Forward is enabled while loaded (playing or paused) and disabled in the other two states. While
+loading all five are disabled, so a Set which is still enabled was not taken.
 
 So **`btnPause` enabled ⇔ playing**, and **`btnPlay` enabled ⇔ loaded and paused** (used to detect the end of
 loading after Set).
@@ -68,8 +73,11 @@ loading after Set).
 
 - **Deepdom**: the only way, forward or back, is **Reset → type the date → Set**. Set is disabled until Reset was
   pressed; typing a date alone does not enable it. After Set the data loads: **69 s and 171 s** observed until Play
-  was enabled. **Deepdom sometimes crashes during the Set cycle** (user report; not observed by us).
-- **Deepchart backwards**: Reset → date → Set (reloads the data, slow). Not tested through automation yet.
+  was enabled. **Deepdom sometimes crashes during the Set cycle** (user report). The Windows event log
+  has a crash at 2026-11-22 18:02 which is probably one: an unhandled `Unable to download historical data: historical
+  server connection failed` in a click handler of Deepdom.
+- **Deepchart backwards**: Reset → date → Set (reloads the data, slow). **The Reset alone can take over a minute**
+  (2026-11-22: Set was still disabled after 2 minutes, half of which Deepchart did not answer).
 - **Deepchart forwards**: type a later date into the date box, press **`btnForward`**. The chart jumps forward.
   There is **no feedback in the Replay Manage window** (no popup, no state change): the chart just moves. With a date
   earlier than the current position, Forward does nothing. Typing via `ValuePattern.SetValue` is enough, no focus
@@ -102,6 +110,11 @@ loading after Set).
   Deepdom does not stall the loop (Deepchart must be paused *while* Deepdom is frozen).
 - A timeout throws. `ElementNotAvailableException` or a dead process means the window is gone (reconnect); any other
   exception with a live process is treated as "not responding" and the elements are kept.
+- **A timed out press or SetValue is often still carried out** once the app continues. Look at the state before
+  pressing again, and never take it for "button disabled".
+- **While an app hangs** (tried with a fake WPF app): `IsEnabled` throws a timeout, the Value pattern throws
+  `PatternNotSupportedException`, finding its elements fails, and the search of the desktop's windows can time out as
+  a whole. So a failed read is never "paused" or "disabled".
 - If the apps run elevated, the tools must run elevated too.
 - **Polling may load Deepdom.** At 50 ms polling Deepdom played at 0.65x and once stopped answering UI Automation for
   ~15 s; at 200 ms it played at 0.85 to 0.89x with no freezes. Two runs only, different market periods: suggestive,
@@ -131,11 +144,12 @@ At 0.57x Deepchart has to be paused about 40 % of the time whatever the algorith
 1. **Clock per app** (`ReplayClock`): each rollover of the minute display is an exact anchor. Any other change of the
    displayed minute (Set, Forward, skipped minutes) is a jump: the clock is unanchored until the next rollover.
 2. **Deepdom's lower bound** moves only with what was seen: `label + offset - step` from the axis, where
-   `offset = minute - label` just after a rollover. Before that the label itself, when it is under played data. It
+   `offset = minute - label` just after a rollover, or after Play from a minute it was loaded at. Before that the label itself, when it is under played data. It
    is never extrapolated. Without a readable axis it only moves at rollovers.
 3. **Deepchart's upper bound** comes from the moment the countdown changes (or its settled value while paused) and
    advances at 1.02 x the speed in between. After failed reads it is credited as playing for the whole gap.
-4. **Distrust**: a changed Deepdom minute counts only after a rollover while playing (typed text looks the same), a
+4. **Distrust**: a changed Deepdom minute counts only after a rollover while playing (typed text looks the same),
+   except where a clean start Set it and it was then seen loaded (a reset replay can not load without a Set). A
    reset holds at once, a label jumping forward waits for a rollover, a label moving back while playing is a scrolled
    chart. The rules are in `Screen/ScreenTime.cs`.
 5. **Rule**: pause Deepchart when `chartUpper > domLower − margin`; resume when
@@ -145,17 +159,22 @@ At 0.57x Deepchart has to be paused about 40 % of the time whatever the algorith
 7. **Master Play**: Deepdom plays, the sync is on, the rule starts Deepchart. **Master Pause**: Deepchart, then
    Deepdom, then the sync is off.
 8. **Clean start**: pause both, Deepdom Reset → date → Set, Deepchart Forward (or Reset → Set if the date is not
-   ahead), wait until both have Play enabled (detecting a Deepdom crash), wait `--forward-wait`, then Play Deepdom
-   first and Deepchart second, and anchor both clocks at the start minute.
+   ahead), wait until both have Play enabled (detecting a Deepdom crash), wait `--forward-wait`, anchor both
+   clocks at the start minute, then Play Deepdom. The rule starts Deepchart: pressed right away it was ahead when
+   Deepdom froze at its start. Every step is repeated until its result
+   is seen, and time in which an app does not answer does not count against a timeout.
+9. **Closing the app**: pause both until both are seen paused for 1 s at the same time (30 s at most, then a warning).
 
 ## How it was verified
 
 - The real controller, clocks and trust rules against simulated apps (bursty rates, zooms, drags, scrolling,
   minimizing, typed dates, Sets, hand presses), 1800 hours: never ahead at the default margin. With a margin below
   0.5 an adversarial zoom case got ahead, so the app does not accept less.
-- Not tried on the real apps: clean start, catch-up, zooming or scrolling while playing, 5 minute bars, other themes
-  and display scalings (only dark theme at 125 %). The CPU and display fixes made after the last live run were only
-  checked against the paused apps.
+- Clean start and closing against fake WPF replay windows which freeze at each step (2 to 20 s, and repeatedly) or
+  exit: one Reset, Set and Play each, both paused after closing or a warning which names the app.
+- Not tried on the real apps: clean start with the retries, closing, catch-up, zooming or scrolling while playing,
+  5 minute bars, other themes and display scalings (only dark theme at 125 %). The CPU and display fixes made after
+  the last live run were only checked against the paused apps.
 
 ## Open issues and ideas
 
@@ -175,5 +194,6 @@ At 0.57x Deepchart has to be paused about 40 % of the time whatever the algorith
 - **Text typed into Deepchart's box** is still believed: an earlier date lowers its upper bound.
 - **Text typed into Deepdom's box before the tool started** is believed unless Deepdom is reset or loading.
 - **Deepchart can get ahead while it does not answer**: nothing can pause it then. It is held afterwards.
-- **Killing the tool** while Deepchart plays leaves it playing unguarded: there is no watchdog.
+- **Killing the tool** (or signing out of Windows, which does not wait for the pause) while Deepchart plays leaves it
+  playing unguarded: there is no watchdog.
 - **Startup** costs a busy CPU core for ~20 s (JIT). ReadyToRun would shorten it.

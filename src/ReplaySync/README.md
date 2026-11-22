@@ -6,14 +6,15 @@ in [docs/findings.md](../../docs/findings.md).
 ## Rules
 
 - **Deepdom is the reference.** Syncing only pauses and resumes Deepchart. Deepdom is only pressed by Play, Pause
-  (the app's button, the console's `P` / `Space`) and a clean start.
+  (the app's button, the console's `P` / `Space`), a clean start and closing the app.
 - **Deepchart must never be ahead.** Deepchart's replay time is taken as an upper bound, Deepdom's as a lower bound.
   Deepchart is paused when its upper bound is less than `--margin` seconds behind Deepdom's lower bound, and resumed
   when it is `--margin + --hysteresis` behind.
 - **Deepdom's lower bound is never extrapolated.** It moves only with what was seen: a label on its time axis, or a
   minute change. No assumed rate is safe.
 - **A changed Deepdom time counts only after its next rollover while playing.** Until then Deepchart is held, as text
-  typed into the date box looks exactly like a new replay time. A clean start needs no such wait.
+  typed into the date box looks exactly like a new replay time. A clean start needs no such wait, also one which did not finish: once Deepdom is seen
+  loaded after its Set it is at exactly that minute.
 - **While syncing Deepchart always follows.** Both run in sync or neither does.
 - Only the Replay Manage windows get input. The chart windows are only looked at (pixels). Nothing takes the focus.
 
@@ -46,7 +47,7 @@ The date must be typed the way the date box shows it (e.g. `06/01/2026 10:15`).
 | `SyncController.cs` | The sync: polling, the correction rule, catch-up, the clean start. Shared with the desktop app. |
 | `SyncOptions.cs` | The tuning values and their defaults. |
 | `SyncSnapshot.cs` | The immutable state a front end shows. |
-| `ReplayApp.cs` | One app's Replay Manage window: find it, read clock / playing / speed, Play, Pause, Forward, Reset + Set. |
+| `ReplayApp.cs` | One app's Replay Manage window: find it, read clock / playing / speed, press its buttons, type the date. |
 | `ReplayClock.cs` | One replay clock: minute anchors, the bounds, the best guess. |
 | `Screen/WindowCapture.cs` | Pixels of a window region through Windows Graphics Capture. |
 | `Screen/ClockReaders.cs` | Find and read Deepdom's axis label and Deepchart's countdown. |
@@ -68,7 +69,7 @@ The date must be typed the way the date box shows it (e.g. `06/01/2026 10:15`).
 | `--verbose` | off | log every pause and resume |
 | `--start "<date>"` | | clean start at this minute |
 | `--forward-wait <s>` | 5 | Forward gives no feedback: time to wait after it |
-| `--load-timeout <s>` | 180 | how long to wait for Reset + Set to load |
+| `--load-timeout <s>` | 600 | how long to wait for each Reset, Set and load, not counting the time an app does not answer |
 
 Quitting with `Q`, turning the correction off with `A`, or Ctrl+C resumes Deepchart if the tool was holding it.
 Killing the process leaves Deepchart paused, which is the safe side.
