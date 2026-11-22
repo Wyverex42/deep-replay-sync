@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ReplayProbe/ReplayProbe.csproj" />
+    <Project Path="src/ReplaySync/ReplaySync.csproj" />
+  </Folder>
+</Solution>
