@@ -19,7 +19,7 @@ replay windows through Windows UI Automation and pauses Deepchart whenever it ge
 
 ## Requirements
 
-- Windows 11, the .NET 10 SDK.
+- Windows 10 2004 or later (Windows 11 for capture without the yellow border), the .NET 10 SDK.
 - Deepchart and Deepdom running, each with its **Replay Manage** window open.
 - If the apps run as administrator, the tools must too (otherwise UI Automation sees nothing).
 

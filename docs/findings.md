@@ -98,7 +98,10 @@ loading after Set).
   second 36.0 to 36.99. It is redrawn up to ~0.6 s late.
 - Both are read by matching rendered Segoe UI digits: 261 of 261 recorded frames right. The Windows OCR engine read
   only 60 % of the small axis labels.
-- **Capture**: use Windows Graphics Capture and copy only the needed strip. `PrintWindow` took 135 ms of Deepdom's
+- **Capture**: use Windows Graphics Capture and copy only the needed strip. The item is made with
+  `IGraphicsCaptureItemInterop.CreateForWindow`, which works on Windows 10 (`TryCreateFromWindowId` is Windows 11
+  only). Windows 10 draws a yellow border around the captured windows (not in the image); Windows 11 can turn it off.
+  Checked on Windows 10 22H2 on 2026-11-23: both clocks read. `PrintWindow` took 135 ms of Deepdom's
   UI thread per image. Copying whole windows from the GPU cost ~20 % of a CPU core per window, the strips ~1 %.
 - **Deepdom's log files are encrypted**: left alone.
 - The main DOM and chart windows contain **order buttons** (`btnBuyMkt`, `btnSellMkt`, `btnBuyLmt`, ...). The tools

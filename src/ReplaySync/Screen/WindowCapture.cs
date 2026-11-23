@@ -53,8 +53,7 @@ sealed class WindowCapture : IDisposable
 
     public WindowCapture(IntPtr window)
     {
-        var item = GraphicsCaptureItem.TryCreateFromWindowId(new Windows.UI.WindowId { Value = (ulong)window.ToInt64() })
-                   ?? throw new InvalidOperationException("the window can not be captured");
+        var item = CaptureItemFor(window);
         _gpu = new Gpu();
         item.Closed += (_, _) => _closed = true;
         _size = item.Size;
@@ -62,14 +61,18 @@ sealed class WindowCapture : IDisposable
         _pool.FrameArrived += OnFrame;
         _session = _pool.CreateCaptureSession(item);
         _session.IsCursorCaptureEnabled = false;
-        try
+        // Windows 10 always draws a yellow border around a captured window; it is not in the image
+        if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 20348))
         {
-            _ = GraphicsCaptureAccess.RequestAccessAsync(GraphicsCaptureAccessKind.Borderless).AsTask().GetAwaiter().GetResult();
-            _session.IsBorderRequired = false;
-        }
-        catch (Exception)
-        {
-            // Windows then draws its yellow border around the window, the capture works all the same
+            try
+            {
+                _ = GraphicsCaptureAccess.RequestAccessAsync(GraphicsCaptureAccessKind.Borderless).AsTask().GetAwaiter().GetResult();
+                _session.IsBorderRequired = false;
+            }
+            catch (Exception)
+            {
+                // The border is drawn then, the capture works all the same
+            }
         }
         // Less work for the compositor on a slow machine
         if (OperatingSystem.IsWindowsVersionAtLeast(10, 0, 26100)) _session.MinUpdateInterval = TimeSpan.FromMilliseconds(MinUpdateMs);
@@ -77,6 +80,46 @@ sealed class WindowCapture : IDisposable
     }
 
     public bool IsClosed => _closed;
+
+    [ComImport, Guid("3628e81b-3cac-4c60-b7f4-23ce0e0c3356"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IGraphicsCaptureItemInterop
+    {
+        IntPtr CreateForWindow(IntPtr window, in Guid iid);
+        IntPtr CreateForMonitor(IntPtr monitor, in Guid iid);
+    }
+
+    static readonly Guid GraphicsCaptureItemId = new("79c3f95b-31f7-4ec2-a464-632ef5d30760");
+
+    [DllImport("combase.dll", PreserveSig = false)]
+    static extern void RoGetActivationFactory(IntPtr classId, in Guid iid, [MarshalAs(UnmanagedType.IUnknown)] out object factory);
+
+    [DllImport("combase.dll", PreserveSig = false)]
+    static extern void WindowsCreateString([MarshalAs(UnmanagedType.LPWStr)] string text, int length, out IntPtr hstring);
+
+    [DllImport("combase.dll", PreserveSig = false)]
+    static extern void WindowsDeleteString(IntPtr hstring);
+
+    /// <summary>
+    /// The capture item of a window through the interop interface, which works from Windows 10 1903 on
+    /// (TryCreateFromWindowId needs Windows 11).
+    /// </summary>
+    static GraphicsCaptureItem CaptureItemFor(IntPtr window)
+    {
+        const string ClassName = "Windows.Graphics.Capture.GraphicsCaptureItem";
+        WindowsCreateString(ClassName, ClassName.Length, out var classId);
+        try
+        {
+            RoGetActivationFactory(classId, typeof(IGraphicsCaptureItemInterop).GUID, out var factory);
+            var abi = ((IGraphicsCaptureItemInterop)factory).CreateForWindow(window, GraphicsCaptureItemId);
+            try { return GraphicsCaptureItem.FromAbi(abi); }
+            finally { Marshal.Release(abi); }
+        }
+        catch (Exception e)
+        {
+            throw new InvalidOperationException("the window can not be captured", e);
+        }
+        finally { WindowsDeleteString(classId); }
+    }
 
     void OnFrame(Direct3D11CaptureFramePool pool, object _)
     {

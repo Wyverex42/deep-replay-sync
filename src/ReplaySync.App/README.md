@@ -8,7 +8,8 @@ cd src/ReplaySync.App
 dotnet run -c Release
 ```
 
-Needs Windows 11 (borderless window capture).
+Needs Windows 10 2004 or later. On Windows 10 the two chart windows get a yellow border while their clocks are read
+(Windows draws it around every captured window; only Windows 11 lets it be turned off).
 
 ## Use
 
