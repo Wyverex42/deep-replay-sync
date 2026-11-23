@@ -44,6 +44,14 @@ sealed class SyncController : IDisposable
     int _rolloversSinceAxisMoved; // Deepdom minute changes while playing since that label last moved
     bool _domChartStuck;          // Deepdom's box plays on but its chart does not move: the box is not what it shows
     int? _tracedCountdown;
+    bool _boosting;               // Deepchart should play at BoostSpeed to close a gap at x1
+    bool _boostSpeedSet;          // Deepchart's speed may have been raised for that and was not seen back at x1
+    double? _boostPressedAt;
+    double _boostStepSince;
+    bool _boostTold;              // the failure to go back to x1 was logged
+    int _chartBoxSpeed;           // Deepchart's speed box at the last reading
+    int _settleSpeed;             // the speed it showed before it went down, credited until _settleUntil
+    double _settleUntil;
 
     sealed class Tracked(ReplayApp app, ReplayClock clock)
     {
@@ -100,6 +108,13 @@ sealed class SyncController : IDisposable
     const double OvertakeTimeout = 30;
     // Deepdom's box changed minute this often while its axis label stood still: its chart is not moving
     const int StuckAfterRollovers = 2;
+    // Catching up at x1: when Deepdom plays as fast as Deepchart a held Deepchart never gets back by itself, so it
+    // plays at this speed from BoostFrom to BoostTo replay seconds beyond the resume point (margin + hysteresis)
+    const int BoostSpeed = 2;
+    const double BoostFrom = 3, BoostTo = 1;
+    // A speed change is not instant: the old, higher speed is credited to Deepchart's bound this long after its box
+    // shows a lower one
+    const double SpeedSettle = 5;
 
     /// <summary>A speed change in progress. Apps are pressed in Order; HoldChart keeps Deepchart paused meanwhile.</summary>
     sealed class SpeedChange(int target, Queue<Tracked> order, bool holdChart, bool waitForOvertake)
@@ -129,6 +144,7 @@ sealed class SyncController : IDisposable
             Poll(_chart, now);
 
             AdvanceSpeedChange();
+            Boost();
             if (SyncOn) Correct();
             else if (_chart.Last is { Playing: true }) _chartHeld = false; // resumed by hand while the sync was off
             _lastFault = null;
@@ -214,6 +230,8 @@ sealed class SyncController : IDisposable
         // Deepdom's time read from the screen needs no extrapolation, and an assumed rate could be too high
         bool credit = isChart || (t.LastOk && !t.ToTheSecond);
         var credited = isChart && _chartMissedRead ? reading with { Playing = true } : reading;
+        // The upper bound counts the fastest speed Deepchart may still be playing at
+        if (isChart) credited = credited with { Speed = ChartSpeedForBound(reading.Speed) };
         if (_options.Trace && (t.Last is not { } prev || prev.Text != reading.Text || prev.Playing != reading.Playing || prev.Speed != reading.Speed))
             _log($"trace {t.Label} box '{reading.Text}' {(reading.Playing ? "play" : "paused")} x{reading.Speed} at {now:0.000}");
         t.LastOk = true;
@@ -266,8 +284,98 @@ sealed class SyncController : IDisposable
             WatchForStart(reading);
         }
         if (!isChart && !reading.Playing) _domScreen.Stopped();
-        if (isChart) ReadChartScreen(reading);
+        if (isChart) ReadChartScreen(reading with { Speed = credited.Speed });
         else ReadDomScreen(reading);
+    }
+
+    /// <summary>
+    /// The speed to credit Deepchart's upper bound with: the box, but also the boost speed from before it is pressed,
+    /// and a higher speed for SpeedSettle seconds after the box went down from it.
+    /// </summary>
+    int ChartSpeedForBound(int box)
+    {
+        double now = Now;
+        if (box < _chartBoxSpeed)
+        {
+            _settleSpeed = now < _settleUntil ? Math.Max(_settleSpeed, _chartBoxSpeed) : _chartBoxSpeed;
+            _settleUntil = now + SpeedSettle;
+        }
+        _chartBoxSpeed = box;
+        int speed = box;
+        if (now < _settleUntil) speed = Math.Max(speed, _settleSpeed);
+        if (_boostSpeedSet) speed = Math.Max(speed, BoostSpeed);
+        return speed;
+    }
+
+    /// <summary>
+    /// Catching up at x1. On a PC where Deepdom keeps up with its speed, every second Deepchart was held is lost for
+    /// good: Deepchart can only be paused, so it plays at BoostSpeed until it is close again. Only Deepchart's speed is
+    /// changed. The pause rule stays as it is: the bound is credited at the boost speed (ChartSpeedForBound).
+    /// </summary>
+    void Boost()
+    {
+        if (!_chart.App.IsConnected || _chart.Last is not { } chart) return;
+
+        double resumeAt = _options.Margin + _options.Hysteresis;
+        bool wanted = SyncOn && _speedChange is null && !FastForward && chart.Playing && !_chartReset
+                      && _dom.Last is { Speed: 1, Playing: true }
+                      && AheadBound is { } behind && behind < -(resumeAt + (_boosting ? BoostTo : BoostFrom));
+        if (wanted && !_boosting && chart.Speed == 1)
+        {
+            _boosting = _boostSpeedSet = true;
+            _boostStepSince = Now;
+            _boostPressedAt = null;
+            _log($"Deepchart is {-AheadBound!.Value:0.0}s behind: catching up at x{BoostSpeed}");
+        }
+        else if (!wanted && _boosting)
+        {
+            _boosting = false;
+            _boostStepSince = Now;
+            _boostPressedAt = null;
+            if (_options.Verbose) _log("Deepchart back to x1");
+        }
+
+        // A speed change of the user sets Deepchart itself
+        if (_speedChange is not null || !_boostSpeedSet) return;
+        // Set by hand: not ours to undo
+        if (chart.Speed is not (1 or BoostSpeed))
+        {
+            _boosting = _boostSpeedSet = false;
+            return;
+        }
+
+        int target = _boosting ? BoostSpeed : 1;
+        if (chart.Speed == target)
+        {
+            _boostPressedAt = null;
+            if (target == 1)
+            {
+                _boostSpeedSet = false;
+                if (_boostTold) _log("Deepchart is back at x1");
+                _boostTold = false;
+            }
+            return;
+        }
+        if (_boostPressedAt is { } pressed && Now - pressed < SpeedPressAgain) return;
+        if (Now - _boostStepSince > SpeedPressTimeout)
+        {
+            if (_boosting)
+            {
+                _log($"Deepchart did not take x{BoostSpeed}: not catching up");
+                _boosting = false;
+                _boostStepSince = Now;
+            }
+            else if (!_boostTold)
+            {
+                // Still credited at the boost speed, so it is held more often but never ahead
+                _log("Deepchart does not go back to x1: trying on. Set it by hand if this stays");
+                _boostTold = true;
+            }
+        }
+        // A timed out press may still be carried out: the reading decides, not the result
+        if (_boosting) _chart.App.TypeSpeed(BoostSpeed);
+        else _chart.App.PressSpeedPreset(1);
+        _boostPressedAt = Now;
     }
 
     // Reset or loading: where it will be is unknown, also when the box and the chart still show the old time.
@@ -1020,7 +1128,8 @@ sealed class SyncController : IDisposable
         FastForward,
         FastForward ? FastAhead : null,
         FastBand,
-        _domChartStuck);
+        _domChartStuck,
+        _boostSpeedSet);
 
     static AppSnapshot Describe(Tracked t) => new(
         t.Label,

@@ -179,7 +179,7 @@ public partial class MainWindow : Window
         StatsText.Text = $"{s.Pauses} pauses{worst}";
         StatsText.Foreground = Brush(s.Violations > 0 ? "DangerText" : "Muted");
 
-        bool differ = s.SpeedTarget is null && s.Chart.Reading is { } c && s.Dom.Reading is { } d && c.Speed != d.Speed;
+        bool differ = s.SpeedTarget is null && !s.ChartBoost && s.Chart.Reading is { } c && s.Dom.Reading is { } d && c.Speed != d.Speed;
         SpeedWarning.Visibility = differ ? Visibility.Visible : Visibility.Collapsed;
         if (differ) SpeedWarning.Text = $"Speeds differ: Deepchart x{s.Chart.Reading?.Speed}, Deepdom x{s.Dom.Reading?.Speed}";
     }

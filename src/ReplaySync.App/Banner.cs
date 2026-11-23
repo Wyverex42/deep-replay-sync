@@ -79,6 +79,8 @@ readonly record struct Banner(Level Level, string Title, string Detail)
         }
         if (domPlaying && !dom.ToTheSecond)
             return new(Level.Holding, state, "Can not read the seconds in Deepdom. Keep its chart and time axis visible.");
+        if (chartPlaying && s.ChartBoost)
+            return new(Level.Good, "Catching up", "Deepchart plays at x2 until it is just behind Deepdom, then x1 again.");
         if (chartPlaying)
             return new(Level.Good, "Playing in sync", "Deepchart follows just behind Deepdom.");
         if (!domPlaying)

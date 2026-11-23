@@ -167,7 +167,7 @@ void PrintStatus(SyncSnapshot s, int pauses, double heldSeconds)
     string worst = s.WorstAhead is { } w ? $" | worst at a Deepdom rollover {w:+0.0;-0.0}s, ahead {s.Violations}x" : "";
     string hold = s.SyncOn ? $" | {pauses} pauses, held {Math.Min(100, 100 * heldSeconds / Math.Max(statusEvery, 0.001)):0}%" : " | correction OFF";
     Log($"{Describe(s.Chart, chart)} | {Describe(s.Dom, dom)} | {drift}{bound}{hold}{worst}");
-    if (chart.Speed != dom.Speed && s.SpeedTarget is null) Log($"WARNING: speeds differ (Deepchart x{chart.Speed}, Deepdom x{dom.Speed})");
+    if (chart.Speed != dom.Speed && s.SpeedTarget is null && !s.ChartBoost) Log($"WARNING: speeds differ (Deepchart x{chart.Speed}, Deepdom x{dom.Speed})");
 }
 
 static string Describe(AppSnapshot app, ReplayReading r)
