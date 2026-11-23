@@ -18,6 +18,26 @@
         <Button x:Name="PlayPauseButton" Margin="0,8,0,0" Content="Play" Height="48" FontSize="18" FontWeight="SemiBold"
                 IsEnabled="False" Click="OnPlayPauseClick" />
 
+        <!-- Speed for both. Above x1 Deepchart is kept close, not behind: slow to x1 before trading -->
+        <Grid Margin="0,6,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <Button x:Name="Speed1" Content="x1" Tag="1" Margin="0,0,4,0" Click="OnSpeedClick" IsEnabled="False"
+                    ToolTip="Trading speed. Deepchart waits until Deepdom has passed it." />
+            <Button x:Name="Speed8" Grid.Column="1" Content="x8" Tag="8" Margin="0,0,4,0" Click="OnSpeedClick" IsEnabled="False" />
+            <Button x:Name="Speed40" Grid.Column="2" Content="x40" Tag="40" Margin="0,0,4,0" Click="OnSpeedClick" IsEnabled="False" />
+            <Button x:Name="Speed100" Grid.Column="3" Content="x100" Tag="100" Margin="0,0,4,0" Click="OnSpeedClick" IsEnabled="False" />
+            <TextBox x:Name="SpeedBox" Grid.Column="4" Width="44" Margin="4,0,4,0" VerticalContentAlignment="Center"
+                     AutomationProperties.Name="Speed" ToolTip="Any speed from 1 to 100" KeyDown="OnSpeedBoxKeyDown" />
+            <Button x:Name="SpeedSet" Grid.Column="5" Content="Set" Click="OnSpeedSetClick" IsEnabled="False" />
+        </Grid>
+
         <Border Style="{StaticResource Card}">
             <StackPanel>
                 <TextBlock Style="{StaticResource Caption}" Text="Deepchart compared with Deepdom" />

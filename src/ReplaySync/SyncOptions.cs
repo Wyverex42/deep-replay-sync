@@ -6,6 +6,8 @@ sealed class SyncOptions
     /// <summary>Resume it once it is Margin + this behind.</summary>
     public double Hysteresis { get; set; } = 0.5;
     public int PollMs { get; init; } = 200;
+    /// <summary>Above x1: Deepchart may be this many wall seconds of playback ahead of (or behind) Deepdom.</summary>
+    public double FastLeadSeconds { get; set; } = 1;
     /// <summary>An app which does not answer within this time counts as frozen.</summary>
     public int FreezeMs { get; init; } = 500;
     /// <summary>Forward Deepchart when it is further behind than this.</summary>
@@ -16,4 +18,6 @@ sealed class SyncOptions
     public double LoadTimeout { get; init; } = 600;
     /// <summary>Log every pause and resume.</summary>
     public bool Verbose { get; init; }
+    /// <summary>Log every change of a reading and of a screen clock, with its wall time (for measurements).</summary>
+    public bool Trace { get; init; }
 }

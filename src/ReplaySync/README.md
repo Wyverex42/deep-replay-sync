@@ -6,8 +6,15 @@ in [docs/findings.md](../../docs/findings.md).
 ## Rules
 
 - **Deepdom is the reference.** Syncing only pauses and resumes Deepchart. Deepdom is only pressed by Play, Pause
-  (the app's button, the console's `P` / `Space`), a clean start and closing the app.
-- **Deepchart must never be ahead.** Deepchart's replay time is taken as an upper bound, Deepdom's as a lower bound.
+  (the app's button, the console's `P` / `Space`), the speed buttons (console `1` to `4`), a clean start and
+  closing the app.
+- **Above x1 a little ahead is accepted.** Both faster than x1 is fast forward, never traded: Deepchart is kept
+  within about one wall second of playback of Deepdom. Speed changes press Deepdom first going up and Deepchart first
+  going down. Slowing to x1 holds Deepchart and lets Deepdom pass it at the old speed before both are slowed.
+  The fastest speed offered is x100 (x200 froze Deepdom).
+- **A Deepdom chart which does not move holds Deepchart**: its box changed minute twice while the axis label stood
+  still (seen at 14:11:56 on 06/01/2026, or a chart scrolled back).
+- **At x1 Deepchart must never be ahead.** Deepchart's replay time is taken as an upper bound, Deepdom's as a lower bound.
   Deepchart is paused when its upper bound is less than `--margin` seconds behind Deepdom's lower bound, and resumed
   when it is `--margin + --hysteresis` behind.
 - **Deepdom's lower bound is never extrapolated.** It moves only with what was seen: a label on its time axis, or a
@@ -35,7 +42,15 @@ dotnet run                                        # measure only
 ```
 
 Keys: `A` toggles the correction, `P` plays in sync (turns the correction on), `Space` pauses both and turns it off,
-`Q` quits.
+`1` / `2` / `3` / `4` set both to x1 / x8 / x40 / x100, `Q` quits.
+
+For measurements and test runs:
+
+```bash
+dotnet run -- --trace                                        # log every box, play state, speed and screen clock change
+dotnet run -- --auto --plan "0:play,30:x40,90:x1,300:pause,305:quit"   # timed commands (play, pause, x<N>, quit)
+dotnet run -- --speed-test Deepchart                         # paused: press x8, type 5, press x1, print box and slider
+```
 
 The date must be typed the way the date box shows it (e.g. `06/01/2026 10:15`).
 
@@ -67,6 +82,8 @@ The date must be typed the way the date box shows it (e.g. `06/01/2026 10:15`).
 | `--catch-up <s>` | 90 | when Deepchart is further behind, Forward it to the minute Deepdom shows |
 | `--status <s>` | 5 | status line interval |
 | `--verbose` | off | log every pause and resume |
+| `--trace` | off | log every change of the date boxes, play states, speeds and screen clocks |
+| `--plan "<steps>"` | | timed commands, seconds after the start: `play`, `pause`, `x<N>`, `quit` |
 | `--start "<date>"` | | clean start at this minute |
 | `--forward-wait <s>` | 5 | Forward gives no feedback: time to wait after it |
 | `--load-timeout <s>` | 600 | how long to wait for each Reset, Set and load, not counting the time an app does not answer |

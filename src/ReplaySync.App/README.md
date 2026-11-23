@@ -16,6 +16,9 @@ Needs Windows 11 (borderless window capture).
 - **Play** plays Deepdom and syncs: Deepchart starts by itself as soon as it is safely behind, and is paused and
   resumed from then on. While syncing a Deepchart paused by hand follows again.
 - **Pause** pauses both and ends the sync. To run just one app, pause here and use that app's own replay window.
+- **Speed**: x1, x8, x40, x100 or a typed 1 to 100 sets both apps. Above x1 Deepchart is kept roughly in sync and
+  may be a little ahead ("Fast forward"). x1 is for trading: Deepchart is held while Deepdom plays on fast until it
+  has passed Deepchart ("Slowing down to x1"), then both go to x1.
 - **Closing the window** pauses both, also without the sync. It waits up to 30 s for an app which does not answer,
   then names what it could not pause.
 - **Clean start** resets both replays to a minute and plays them in sync, after a confirmation. Deepdom starts,
@@ -38,7 +41,7 @@ but up to a minute or so behind. Each app's line says "reading seconds" or "minu
 | Colour | Meaning |
 |---|---|
 | Grey | Paused |
-| Green | Playing in sync, including the short pauses |
+| Green | Playing in sync, including the short pauses. Or fast forward |
 | Amber | Deepchart is held or reset, the text says why. Or Deepdom plays without the sync |
 | Red | Not guarded or ahead: Deepchart plays by itself, not responding, not found, not updating |
 

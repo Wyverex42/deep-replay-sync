@@ -27,6 +27,7 @@ public partial class MainWindow : Window
 
     string? _confirmedDate;
     long? _requestedAt;
+    long? _speedRequestedAt;
     bool _offersPause;
     bool _closing, _closed;
 
@@ -84,6 +85,7 @@ public partial class MainWindow : Window
         PlayPauseButton.IsEnabled = !working && !_runner.CleanStarting && _requestedAt is null
                                     && (_offersPause || (s.Chart.Connected && s.Dom.Connected));
         PlayPauseButton.Content = _offersPause ? "Pause" : "Play";
+        UpdateSpeedButtons(status, working);
         PlayPauseButton.Background = Brush(_offersPause ? "Raised" : "Accent");
 
         UpdateStartPanel(status);
@@ -110,6 +112,16 @@ public partial class MainWindow : Window
             GapText.Text = None;
             GapText.Foreground = Brush("Muted");
             BoundText.Text = "No current reading";
+            return;
+        }
+
+        if (s.FastForward)
+        {
+            // Not trading: only roughly in sync, and that is fine
+            GapText.Text = s.FastAhead is not { } fast ? "Not measured yet"
+                : fast > 0 ? $"~{fast:0} s ahead" : $"~{-fast:0} s behind";
+            GapText.Foreground = Brush(s.FastAhead is null ? "Muted" : "Text");
+            BoundText.Text = $"Fast forward: kept within about {s.FastBand / 2:0} s. Slow to x1 before trading.";
             return;
         }
 
@@ -167,7 +179,7 @@ public partial class MainWindow : Window
         StatsText.Text = $"{s.Pauses} pauses{worst}";
         StatsText.Foreground = Brush(s.Violations > 0 ? "DangerText" : "Muted");
 
-        bool differ = s.Chart.Reading is { } c && s.Dom.Reading is { } d && c.Speed != d.Speed;
+        bool differ = s.SpeedTarget is null && s.Chart.Reading is { } c && s.Dom.Reading is { } d && c.Speed != d.Speed;
         SpeedWarning.Visibility = differ ? Visibility.Visible : Visibility.Collapsed;
         if (differ) SpeedWarning.Text = $"Speeds differ: Deepchart x{s.Chart.Reading?.Speed}, Deepdom x{s.Dom.Reading?.Speed}";
     }
@@ -231,6 +243,59 @@ public partial class MainWindow : Window
         else _runner.Play();
     }
 
+
+    // Speed
+
+    void UpdateSpeedButtons(SyncRunner.Status status, bool working)
+    {
+        var s = status.Sync;
+        if (_speedRequestedAt is { } requested && status.PublishedAt > requested) _speedRequestedAt = null;
+        bool enabled = !working && !_runner.CleanStarting && _speedRequestedAt is null && s.SpeedTarget is null
+                       && s.Chart.Reading is not null && s.Dom.Reading is not null;
+        int? current = s.Dom.Reading?.Speed;
+        foreach (var button in new[] { Speed1, Speed8, Speed40, Speed100 })
+        {
+            button.IsEnabled = enabled;
+            if (int.Parse((string)button.Tag, CultureInfo.InvariantCulture) == (s.SpeedTarget ?? current))
+                button.Background = Brush("Accent");
+            else
+                button.ClearValue(BackgroundProperty);
+        }
+        SpeedSet.IsEnabled = enabled;
+    }
+
+    void OnSpeedClick(object sender, RoutedEventArgs e)
+    {
+        DropFocus();
+        RequestSpeed(int.Parse((string)((System.Windows.Controls.Button)sender).Tag, CultureInfo.InvariantCulture));
+    }
+
+    void OnSpeedSetClick(object sender, RoutedEventArgs e)
+    {
+        DropFocus();
+        if (!int.TryParse(SpeedBox.Text.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out int speed)
+            || speed < 1 || speed > SyncController.MaxSpeed)
+        {
+            LastMessage.Text = $"Speed: a whole number from 1 to {SyncController.MaxSpeed}.";
+            return;
+        }
+        RequestSpeed(speed);
+    }
+
+    void OnSpeedBoxKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || !SpeedSet.IsEnabled) return;
+        e.Handled = true;
+        OnSpeedSetClick(sender, e);
+    }
+
+    void RequestSpeed(int speed)
+    {
+        foreach (var button in new[] { Speed1, Speed8, Speed40, Speed100 }) button.IsEnabled = false;
+        SpeedSet.IsEnabled = false;
+        _speedRequestedAt = Stopwatch.GetTimestamp();
+        _runner.SetSpeed(speed);
+    }
 
     // Not Click: toggling through UI Automation (screen readers) does not raise it
     void OnTabChanged(object sender, RoutedEventArgs e)

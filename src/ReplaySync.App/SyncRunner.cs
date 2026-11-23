@@ -47,6 +47,7 @@ sealed class SyncRunner
 
     public void Play() => Post(c => c.Play());
     public void Pause() => Post(c => c.Pause());
+    public void SetSpeed(int speed) => Post(c => c.RequestSpeed(speed));
 
     public void ApplyTuning(Settings s)
     {

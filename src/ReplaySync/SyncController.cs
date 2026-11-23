@@ -37,6 +37,13 @@ sealed class SyncController : IDisposable
     int _violations;
     double _previousStep = Now, _nextConnect;
     string? _activity, _lastFault;
+    AxisReading? _tracedAxis;
+    SpeedChange? _speedChange;
+    int? _axisSecond;             // Deepdom's right-most axis label at the last reading
+    bool _axisReadable;           // the last Deepdom screen reading had a label
+    int _rolloversSinceAxisMoved; // Deepdom minute changes while playing since that label last moved
+    bool _domChartStuck;          // Deepdom's box plays on but its chart does not move: the box is not what it shows
+    int? _tracedCountdown;
 
     sealed class Tracked(ReplayApp app, ReplayClock clock)
     {
@@ -85,6 +92,25 @@ sealed class SyncController : IDisposable
     const double CatchUpPressSeconds = 5;
     // Play and Pause are both disabled for a moment when pressed, which reads as paused
     const double PausedFor = 1;
+    /// <summary>The fastest speed offered: x200 froze Deepdom for 90 s and x400 stopped its chart (findings).</summary>
+    public const int MaxSpeed = 100;
+    // A speed which is not shown in the box after this long was not taken
+    const double SpeedPressTimeout = 10, SpeedPressAgain = 1.5;
+    // Slowing to x1: how long Deepdom may take to pass Deepchart before both are slowed anyway (then Deepchart waits)
+    const double OvertakeTimeout = 30;
+    // Deepdom's box changed minute this often while its axis label stood still: its chart is not moving
+    const int StuckAfterRollovers = 2;
+
+    /// <summary>A speed change in progress. Apps are pressed in Order; HoldChart keeps Deepchart paused meanwhile.</summary>
+    sealed class SpeedChange(int target, Queue<Tracked> order, bool holdChart, bool waitForOvertake)
+    {
+        public int Target { get; } = target;
+        public Queue<Tracked> Order { get; } = order;
+        public bool HoldChart { get; } = holdChart;
+        public bool WaitForOvertake = waitForOvertake;
+        public double StepSince = Now;
+        public double? PressedAt;
+    }
 
     public bool SyncOn { get; private set; }
 
@@ -102,6 +128,7 @@ sealed class SyncController : IDisposable
             Poll(_dom, now);
             Poll(_chart, now);
 
+            AdvanceSpeedChange();
             if (SyncOn) Correct();
             else if (_chart.Last is { Playing: true }) _chartHeld = false; // resumed by hand while the sync was off
             _lastFault = null;
@@ -187,6 +214,8 @@ sealed class SyncController : IDisposable
         // Deepdom's time read from the screen needs no extrapolation, and an assumed rate could be too high
         bool credit = isChart || (t.LastOk && !t.ToTheSecond);
         var credited = isChart && _chartMissedRead ? reading with { Playing = true } : reading;
+        if (_options.Trace && (t.Last is not { } prev || prev.Text != reading.Text || prev.Playing != reading.Playing || prev.Speed != reading.Speed))
+            _log($"trace {t.Label} box '{reading.Text}' {(reading.Playing ? "play" : "paused")} x{reading.Speed} at {now:0.000}");
         t.LastOk = true;
         t.Last = reading;
         if (isChart)
@@ -204,11 +233,13 @@ sealed class SyncController : IDisposable
             // Text typed into Deepdom's box looks like a new time, and following it would show the future. A changed
             // time counts only once a rollover is seen while playing. At first sight: not while reset or loading.
             if (before is null && after is not null) _domUnconfirmed = !reading.Playing && !t.App.CanPlay;
-            else if (after != before) _domUnconfirmed = !(rollover && (reading.Playing || wasPlaying));
+            else if (after != before)
+                _domUnconfirmed = !(rollover && (reading.Playing || wasPlaying)) && !PlausibleSkip(before, after, reading, wasPlaying, dt);
         }
 
         bool confirmedRollover = rollover && (isChart || !_domUnconfirmed);
-        if (before is not null && after != before && !confirmedRollover)
+        bool skipped = !isChart && before is not null && after != before && !_domUnconfirmed && !rollover;
+        if (before is not null && after != before && !confirmedRollover && !skipped)
         {
             // Set, Forward, reset or typed: the images may still show the time before it
             t.ScreenFrom = now + 1;
@@ -216,6 +247,7 @@ sealed class SyncController : IDisposable
             else _domScreen.Reset();
         }
         if (confirmedRollover && !isChart && (reading.Playing || wasPlaying)) _domScreen.Rollover(after!.Value, Now);
+        if ((confirmedRollover || skipped) && !isChart) CountDomMinute();
 
         if (rollover && !_domUnconfirmed)
         {
@@ -298,10 +330,18 @@ sealed class SyncController : IDisposable
         if (_screen.Dom is not { } seen || seen.FrameAt < _dom.ScreenFrom || _dom.Clock.DisplayedMinute is not { } minute)
         {
             _dom.ToTheSecond = false;
+            AxisSeen(null);
             return;
         }
         if (seen.FrameAt == _dom.FrameHandled) return;
         _dom.FrameHandled = seen.FrameAt;
+        AxisSeen(seen.Value.SecondOfDay);
+        if (_options.Trace && seen.Value != _tracedAxis)
+        {
+            _tracedAxis = seen.Value;
+            var a = seen.Value;
+            _log($"trace Deepdom axis {TimeSpan.FromSeconds(a.SecondOfDay):hh\\:mm\\:ss} step {a.StepSeconds}s frame {seen.FrameAt:0.000}");
+        }
 
         DateTime? known = _dom.Clock.Anchored && !_domUnconfirmed ? _dom.Clock.Bound : null;
         var reached = _domScreen.Update(seen.Value, seen.FrameAt, minute, reading.Speed, known);
@@ -324,6 +364,11 @@ sealed class SyncController : IDisposable
             return;
         }
         _chart.ToTheSecond = true;
+        if (_options.Trace && seen.Value != _tracedCountdown)
+        {
+            _tracedCountdown = seen.Value;
+            _log($"trace Deepchart countdown {seen.Value} frame {seen.FrameAt:0.000}");
+        }
         // Also without a new image: a paused countdown is used once it has settled
         if (_chartScreen.Update(seen.Value, seen.FrameAt, Now, minute, reading.Speed, reading.Playing) is { } limit)
             _chart.Clock.NotPast(limit.Upper, limit.Ticking);
@@ -335,7 +380,8 @@ sealed class SyncController : IDisposable
         if (!other.Clock.Anchored) return;
 
         double ahead = (_chart.Clock.Estimate - _dom.Clock.Estimate).TotalSeconds;
-        if (t == _dom)
+        // In fast forward a little ahead is accepted: only x1 counts
+        if (t == _dom && !FastForward)
         {
             // Deepdom is exactly at the minute: how far ahead is Deepchart really (best guess, not bound)?
             _worstAhead = Math.Max(_worstAhead, ahead);
@@ -344,9 +390,54 @@ sealed class SyncController : IDisposable
         _log($"{t.Label} at {t.Clock.Estimate:HH:mm:ss} (exact), Deepchart ~{DescribeGap(ahead)}  [{t.Label} rate {t.Clock.Rate:0.00}]");
     }
 
+    /// <summary>
+    /// At high speed the box can skip minutes between two polls. A forward change while playing fast, no further than
+    /// the replay could have played, is progress, not a Set or typed text.
+    /// </summary>
+    static bool PlausibleSkip(DateTime? before, DateTime? after, ReplayReading reading, bool wasPlaying, double dt) =>
+        before is { } b && after is { } a && a > b && reading.Playing && wasPlaying && reading.Speed > 1
+        && (a - b).TotalSeconds <= dt * reading.Speed * 1.5 + 60;
+
+    // Deepdom changed minute while playing: its axis label should have moved since the last one
+    void CountDomMinute()
+    {
+        // Counted only while the axis is read: without it the box is all there is (as before)
+        if (!_axisReadable) return;
+        _rolloversSinceAxisMoved++;
+        if (_rolloversSinceAxisMoved < StuckAfterRollovers || _domChartStuck) return;
+        _domChartStuck = true;
+        _log("Deepdom's chart is not moving while its replay plays on (frozen, or scrolled back): Deepchart waits");
+    }
+
+    // Each new axis reading: a label which moved clears the suspicion. Unreadable: nothing to compare.
+    // Only a label which moved clears it: a frozen chart may also fail to read now and then
+    void AxisSeen(int? secondOfDay)
+    {
+        _axisReadable = secondOfDay is not null;
+        if (secondOfDay is null || secondOfDay == _axisSecond) return;
+        _axisSecond = secondOfDay;
+        _rolloversSinceAxisMoved = 0;
+        if (!_domChartStuck) return;
+        _domChartStuck = false;
+        _log("Deepdom's chart moves again");
+    }
+
+    /// <summary>Both apps play faster than x1 and no slowdown is under way: Deepchart is kept close, not behind.</summary>
+    bool FastForward => _speedChange is not { HoldChart: true }
+                        && _dom.Last is { Speed: > 1 } && _chart.Last is { Speed: > 1 };
+
+    /// <summary>Fast forward: Deepchart is kept within plus or minus half of this many replay seconds of Deepdom.</summary>
+    double FastBand => Math.Max(10, 2 * _options.FastLeadSeconds * (_dom.Last?.Speed ?? 1));
+
+    /// <summary>Best guesses, also unanchored ones (minutes skipped at speed). Null: not known, so hold.</summary>
+    double? FastAhead =>
+        _domUnconfirmed || _domChartStuck || _chart.Clock.DisplayedMinute is null || _dom.Clock.DisplayedMinute is null
+            ? null
+            : (_chart.Clock.Estimate - _dom.Clock.Estimate).TotalSeconds;
+
     /// <summary>Deepchart's upper bound against Deepdom's lower bound. Null: not known, so hold.</summary>
     double? AheadBound =>
-        _domUnconfirmed || _chart.Clock.DisplayedMinute is null || _dom.Clock.DisplayedMinute is null
+        _domUnconfirmed || _domChartStuck || _chart.Clock.DisplayedMinute is null || _dom.Clock.DisplayedMinute is null
             ? null
             : (_chart.Clock.Bound - _dom.Clock.Bound).TotalSeconds;
 
@@ -360,10 +451,24 @@ sealed class SyncController : IDisposable
         double? bound = AheadBound;
         bool mustHold = bound is null || bound > -_options.Margin;
         bool mayResume = bound is { } b && b <= -(_options.Margin + _options.Hysteresis);
+        bool fast = FastForward;
+
+        if (_speedChange is { HoldChart: true })
+        {
+            (mustHold, mayResume) = (true, false);
+        }
+        else if (fast)
+        {
+            // Not trading at these speeds: the best guesses are good enough, a little ahead is acceptable
+            double? ahead = FastAhead;
+            mustHold = ahead is null || ahead > FastBand / 2;
+            mayResume = ahead is { } a && a < -FastBand / 2;
+            bound = ahead;
+        }
 
         // Far behind (restart, Deepdom ahead after a Set): jump Deepchart to the minute Deepdom shows. Safe: Deepdom
         // is at or past its displayed minute. Forward only goes ahead, so this never moves Deepchart back.
-        if (bound is { } far && far < -_options.CatchUp && _chart.App.CanForward
+        if (!fast && bound is { } far && far < -_options.CatchUp && _chart.App.CanForward
             && _dom.Last is { } dom && dom.Minute == _dom.Clock.DisplayedMinute
             && _dom.Clock.DisplayedMinute > _chart.Clock.DisplayedMinute
             && (chart.Playing || _chart.App.CanPlay))
@@ -532,6 +637,79 @@ sealed class SyncController : IDisposable
         if (!chartPaused) _log("Pause: Deepchart did NOT pause: pause it by hand");
         if (!domPaused) _log("Pause: Deepdom did NOT pause: pause it by hand");
         return chartPaused && domPaused;
+    }
+
+    /// <summary>
+    /// Sets both replays to this speed: a click of the user, like the master Play. Deepchart is never the faster one
+    /// while it happens: going up Deepdom is pressed first, going down Deepchart. Slowing to x1 while syncing holds
+    /// Deepchart and lets Deepdom pass it at the old speed before both are slowed, so trading starts with Deepdom
+    /// certainly ahead.
+    /// </summary>
+    public bool RequestSpeed(int speed)
+    {
+        if (speed is < 1 or > MaxSpeed)
+        {
+            _log($"Speed: x{speed} is not offered (x1 to x{MaxSpeed})");
+            return false;
+        }
+        if (_chart.Last is not { } chart || _dom.Last is not { } dom)
+        {
+            _log("Speed: both Replay Manage windows must be open");
+            return false;
+        }
+
+        bool slowToTrade = speed == 1 && SyncOn && (dom.Speed > 1 || chart.Speed > 1);
+        bool overtake = slowToTrade && dom.Playing && dom.Speed > 1;
+        var order = new Queue<Tracked>(speed < dom.Speed ? [_chart, _dom] : [_dom, _chart]);
+        _speedChange = new SpeedChange(speed, order, holdChart: slowToTrade, waitForOvertake: overtake);
+        _log(overtake ? $"Speed x1: Deepchart waits until Deepdom has passed it at x{dom.Speed}"
+            : $"Speed x{speed}: {order.Peek().Label} first");
+        return true;
+    }
+
+    void AdvanceSpeedChange()
+    {
+        if (_speedChange is not { } change) return;
+
+        if (change.WaitForOvertake)
+        {
+            bool domPlaying = _dom.Last is { Playing: true };
+            bool passed = _chart.Last is { Playing: false } && AheadBound is { } b && b <= -(_options.Margin + _options.Hysteresis);
+            bool late = Now - change.StepSince > OvertakeTimeout;
+            if (domPlaying && !passed && !late) return;
+            _log(passed ? "Deepdom has passed Deepchart: slowing both to x1"
+                : late ? $"Deepdom did not pass Deepchart within {OvertakeTimeout:0} s: slowing anyway, Deepchart waits"
+                : "Deepdom is paused: slowing both to x1");
+            change.WaitForOvertake = false;
+            change.StepSince = Now;
+        }
+
+        while (change.Order.TryPeek(out var t))
+        {
+            if (t.Last?.Speed == change.Target)
+            {
+                change.Order.Dequeue();
+                change.PressedAt = null;
+                change.StepSince = Now;
+                continue;
+            }
+            if (Now - change.StepSince > SpeedPressTimeout)
+            {
+                _log($"Speed: {t.Label} did not take x{change.Target}. Set it by hand");
+                _speedChange = null;
+                return;
+            }
+            if (change.PressedAt is not { } pressed || Now - pressed > SpeedPressAgain)
+            {
+                // A timed out press may still be carried out: the reading decides, not the result
+                if (Array.IndexOf(ReplayApp.Presets, change.Target) >= 0) t.App.PressSpeedPreset(change.Target);
+                else t.App.TypeSpeed(change.Target);
+                change.PressedAt = Now;
+            }
+            return;
+        }
+        _log($"Both at x{change.Target}");
+        _speedChange = null;
     }
 
     public void ApplyTuning(double margin, double hysteresis, double catchUp)
@@ -836,7 +1014,13 @@ sealed class SyncController : IDisposable
         _heldSeconds,
         double.IsNegativeInfinity(_worstAhead) ? null : _worstAhead,
         _violations,
-        _activity);
+        _activity,
+        _speedChange?.Target,
+        _speedChange is { WaitForOvertake: true },
+        FastForward,
+        FastForward ? FastAhead : null,
+        FastBand,
+        _domChartStuck);
 
     static AppSnapshot Describe(Tracked t) => new(
         t.Label,

@@ -14,6 +14,8 @@ sealed record AppSnapshot(
 /// <summary>
 /// Everything a front end shows. Ahead and AheadBound are replay seconds, positive when Deepchart is ahead of Deepdom:
 /// the best guess and the worst case. Either is null while it is not known.
+/// SpeedTarget: a speed change in progress. Overtaking: slowing to x1, Deepdom passes the held Deepchart first.
+/// FastForward: both play faster than x1 and Deepchart is kept within FastBand / 2 of Deepdom (FastAhead), not behind.
 /// </summary>
 sealed record SyncSnapshot(
     AppSnapshot Chart,
@@ -29,4 +31,10 @@ sealed record SyncSnapshot(
     double HeldSeconds,
     double? WorstAhead,
     int Violations,
-    string? Activity);
+    string? Activity,
+    int? SpeedTarget,
+    bool Overtaking,
+    bool FastForward,
+    double? FastAhead,
+    double FastBand,
+    bool DomChartStuck);

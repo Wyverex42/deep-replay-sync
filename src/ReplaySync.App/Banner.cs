@@ -36,8 +36,16 @@ readonly record struct Banner(Level Level, string Title, string Detail)
                 "It can not play. Press Set in its Replay Manage window, or run a clean start.");
         }
 
-        // While Deepdom's time is only a rough lower bound, "ahead" would mostly be a false alarm
-        if (s is { Ahead: > 0, AheadBound: > ClearlyAhead, DomTimeIsRough: false })
+        if (s.SpeedTarget is { } target)
+        {
+            return s.Overtaking
+                ? new(Level.Holding, "Slowing down to x1", "Deepdom plays on fast until it has passed Deepchart, then both go to x1.")
+                : new(Level.Holding, $"Changing speed to x{target}", "Deepchart is never the faster one meanwhile.");
+        }
+
+        // While Deepdom's time is only a rough lower bound, "ahead" would mostly be a false alarm. In fast forward a
+        // little ahead is accepted.
+        if (s is { Ahead: > 0, AheadBound: > ClearlyAhead, DomTimeIsRough: false, FastForward: false })
         {
             return new(Level.Danger, "Deepchart is ahead", chartPlaying
                 ? "It is playing past what Deepdom has played."
@@ -58,8 +66,17 @@ readonly record struct Banner(Level Level, string Title, string Detail)
             return new(Level.Holding, state, "Deepdom's Replay Manage window was not found.");
         if (!dom.Responding)
             return new(Level.Holding, chartPlaying ? "Deepdom is not responding" : state, "Deepdom's time is not credited until it answers.");
+        if (s.DomChartStuck)
+            return new(Level.Holding, "Deepdom's chart is not moving", "Its replay plays on but the chart stands still (frozen or scrolled back). Deepchart waits.");
         if (s.DomUnconfirmed)
             return new(Level.Holding, state, "Deepdom's time changed. Waiting for its next minute to confirm it.");
+        if (s.FastForward)
+        {
+            int speed = dom.Reading?.Speed ?? 0;
+            return chartPlaying
+                ? new(Level.Good, $"Fast forward x{speed}", "Both roughly in sync. Slow to x1 before trading.")
+                : new(Level.Holding, $"Fast forward x{speed}", "Deepchart waits for Deepdom to catch up.");
+        }
         if (domPlaying && !dom.ToTheSecond)
             return new(Level.Holding, state, "Can not read the seconds in Deepdom. Keep its chart and time axis visible.");
         if (chartPlaying)

@@ -12,7 +12,8 @@ What we learned about Deepchart and Deepdom while building the replay sync, as o
 - **Deepdom's playback must not be disturbed** while trading: the sync only pauses and resumes Deepchart. Closing
   the desktop app pauses both.
 - Frequent short pauses of Deepchart are fine.
-- Both replays run at the same speed setting (x1 so far).
+- Both replays run at the same speed setting. Trading happens only at x1. Above x1 (fast forward to a level) being
+  a little ahead is acceptable, but slowing back to x1 must leave Deepdom certainly ahead.
 
 ## The apps
 
@@ -39,7 +40,7 @@ AutomationIds):
 | Forward | `btnForward` | **Deepchart only**. No name, icon only |
 | Speed slider | `tkbSpeed` | RangeValue 1..400 |
 | Speed number box | `nudSpeed` → Edit `PART_Txt` | Value pattern, e.g. `1` |
-| Speed presets | buttons named `x1`, `x8`, `x40`, `x100`, `x200`, `x400` | **no AutomationId**, find by name |
+| Speed presets | buttons named `x1`, `x8`, `x40`, `x100`, `x200`, `x400` | **no AutomationId**, find by name. Invoke works without focus, also while paused |
 | Market depth (high performance) | `ckbIncludeBook` | **Deepchart only**, Toggle |
 | Reset / Set / Pause / Play | `btnReset`, `btnSet`, `btnPause`, `btnPlay` | Invoke pattern, work without focus |
 
@@ -136,6 +137,28 @@ loading after Set).
 | Recording, 85 s at 10:27 | Deepdom **0.57x**, Deepchart 0.96x. v2 would have assumed at least 0.69x after a 0.86x minute: **v2 was not safe** |
 | Seconds from the screen (v3, current), 150 s + 48 s live | Deepdom 0.57x. **Never ahead** (smallest gap 1.8 s), median lag **3.8 s** once calibrated, 5.8 s before the first minute change. No focus taken by either app |
 
+### Above x1 (2026-11-22, `ReplaySync --trace`, speeds set by hand)
+
+| Setting | Deepdom (box) | Deepchart (box) |
+|---|---|---|
+| x8 | 0.55 of nominal (~14 s per replay minute) | ~1.0 |
+| x40 | 0.58 (~2.7 s per minute) | 0.99 |
+| x100 | 0.5 to 0.65 (~1.2 s per minute) | 0.92 |
+| x200 | **stopped answering UI Automation for 90 s** at once | |
+| x400 | ~0.33, minutes skipped in the box (14:13 → 14:15) | |
+
+- **After the x400 burst Deepdom's chart stopped drawing** (axis stuck at 14:11:56) while its box went on to 15:07
+  and played at 0.8 to 0.97 of nominal: drawing is what slows Deepdom, and **the box is not proof of what Deepdom
+  shows**. It did not recover at x1 and later stopped answering for 84 s again. A rule that follows the box when
+  the axis is stuck would let Deepchart run up to an hour ahead, also at x1.
+- Right after x400 → x1, Deepdom's box still rolled over 3 s later: a speed change is not instant.
+- The axis reader kept up at x40 (a new label every 200 ms poll).
+- Above x100 is not worth it on this laptop; x200 and x400 damaged the Deepdom session.
+- **Second run after a Deepdom restart, x100 at most** (both apps, ~30 s per speed): Deepdom 0.55 at x8, 0.51 at
+  x40, 0.45 at x100; Deepchart 0.97 at x40, 0.98 at x100. Deepchart would gain ~50 replay s per wall second at
+  x100. Deepdom's axis followed its box all the way (0 to 50 s past the box minute), and after x100 → x1 it was at
+  x1 pace within 1.5 s (2 s of axis per ~3.2 s wall, 0.62x). No freeze, no skipped minutes.
+
 Deepdom's lag is **bursty** (stalls and freezes) and its rate varies: never extrapolate it.
 At 0.57x Deepchart has to be paused about 40 % of the time whatever the algorithm: it plays 1.7 times as fast.
 
@@ -164,6 +187,17 @@ At 0.57x Deepchart has to be paused about 40 % of the time whatever the algorith
    Deepdom froze at its start. Every step is repeated until its result
    is seen, and time in which an app does not answer does not count against a timeout.
 9. **Closing the app**: pause both until both are seen paused for 1 s at the same time (30 s at most, then a warning).
+10. **Speed** (the app's x1 / x8 / x40 / x100 buttons or a typed 1 to 100, console keys 1 to 4): a user click like
+    Play. Going up Deepdom is set first, going down Deepchart, so Deepchart is never the faster one. A preset is
+    pressed, any other value is typed into `nudSpeed/PART_Txt` (taken without Enter: the slider follows). Each app
+    is pressed again until its box shows the speed.
+11. **Fast forward** (both above x1): Deepchart is kept within ±`FastLeadSeconds` (1) wall second of playback of
+    Deepdom (±40 s at x40, ±100 s at x100), on the best guesses. No catch-up. A box that skips minutes while
+    playing fast, no further than could have been played, is progress, not a jump.
+12. **Slowing to x1** while syncing: Deepchart is held, Deepdom plays on fast until the x1 worst-case rule says it
+    is past Deepchart (30 s at most), then Deepdom and Deepchart go to x1 and the x1 rule takes over.
+13. **Stuck Deepdom chart**: when Deepdom's box changes minute twice while playing and its axis label stands still,
+    Deepchart is held until the label moves (at every speed; also a chart scrolled back).
 
 ## How it was verified
 
@@ -178,10 +212,16 @@ At 0.57x Deepchart has to be paused about 40 % of the time whatever the algorith
 
 ## Open issues and ideas
 
-- **Speeds above x1**: untested. Margin, hysteresis, the render delays and the capture interval are wall or replay
-  seconds which must scale with the speed first.
-- **Speeds are not synced**, only a warning is shown when they differ. Could be set through `nudSpeed/PART_Txt` or
-  the preset buttons (untested).
+- **Speeds above x1** are synced (rules 10 to 13), verified on the real apps on 2026-11-23: 10:00 → 10:52 with
+  x8 / x40 / x100 / x1, never ahead at x1 (worst bound while Deepchart played −0.6 s, through a 15 s Deepdom freeze),
+  Deepdom past the held Deepchart 0.2 s after slowing. Fast forward is coarse: −180 s to +60 s at x100 (one poll is
+  20 s of replay). The cap is x100: x200 froze Deepdom.
+- **Deepdom's chart can stop while its box plays on.** Seen twice on 06/01/2026, both times at axis label
+  **14:11:56**: after an x400 burst, and again after a clean x100 → x1 slowdown (window responsive). The same label
+  twice suggests the data there rather than a freeze. The sync now holds Deepchart when the box changes minute twice
+  while the axis label stands still (also when the chart is only scrolled back).
+- **Speeds set by hand** in the apps are followed (the mode comes from the speeds read), but not mirrored to the
+  other app: a warning is shown when they differ.
 - **First minute after starting the tool** has ~2 s more lag: the axis offset is not calibrated yet.
 - **Bars under one minute** in Deepchart make the countdown useless (safe, but ~30 s of lag).
 - **Deepdom crash mid-session**: after a restart Deepdom is at an earlier time; Deepchart is held until Deepdom passes

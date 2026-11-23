@@ -11,10 +11,11 @@ sealed class ReplayApp(string label, string processName, UIA3Automation automati
 {
     public string Label { get; } = label;
 
-    AutomationElement? _clock, _play, _pause, _speed, _set, _reset, _forward;
+    AutomationElement? _clock, _play, _pause, _speed, _set, _reset, _forward, _window;
     Process? _process;
 
     public bool IsConnected => _clock is not null;
+    public int? ProcessId => _process?.Id;
     /// <summary>Only Deepchart has a Forward button (jump ahead without a reset).</summary>
     public bool CanForward => _forward is not null;
     /// <summary>The window was found once, so there is a replay which may be playing.</summary>
@@ -69,6 +70,7 @@ sealed class ReplayApp(string label, string processName, UIA3Automation automati
                 _set = window.FindFirstChild(cf.ByAutomationId("btnSet"));
                 _reset = window.FindFirstChild(cf.ByAutomationId("btnReset"));
                 _forward = window.FindFirstChild(cf.ByAutomationId("btnForward"));
+                _window = window;
                 _process = processes.First(p => p.Id == pid);
                 if (_clock is not null && _play is not null && _pause is not null && _set is not null && _reset is not null)
                     return true;
@@ -82,7 +84,41 @@ sealed class ReplayApp(string label, string processName, UIA3Automation automati
         return false;
     }
 
-    void Disconnect() => _clock = _play = _pause = _speed = _set = _reset = _forward = null;
+    void Disconnect() => _clock = _play = _pause = _speed = _set = _reset = _forward = _window = null;
+
+    /// <summary>The speed presets both apps show: buttons named "x1", "x8", ... with no AutomationId.</summary>
+    public static readonly int[] Presets = [1, 8, 40, 100, 200, 400];
+
+    /// <summary>Presses the preset button for this speed. False when there is none, or it was not pressed.</summary>
+    public bool PressSpeedPreset(int speed)
+    {
+        try
+        {
+            if (_window is null) return false;
+            var cf = automation.ConditionFactory;
+            var button = _window.FindFirstDescendant(cf.ByControlType(FlaUI.Core.Definitions.ControlType.Button).And(cf.ByName($"x{speed}")));
+            return Invoke(button);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Types a speed into the speed box. Whether the app applies it without Enter is what the caller checks.</summary>
+    public bool TypeSpeed(int speed)
+    {
+        try
+        {
+            if (_speed is null) return false;
+            _speed.Patterns.Value.Pattern.SetValue(speed.ToString(CultureInfo.InvariantCulture));
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     /// <summary>
     /// Deepchart only: types a later date into the date box and presses Forward. The replay jumps ahead with no
